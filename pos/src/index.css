@@ -1,0 +1,174 @@
+:root {
+  --primary: #0F5E75;
+  --primary-dark: #0b4a5c;
+  --primary-light: #e6f0f2;
+  --accent: #14B8A6;
+  --accent-light: #e6fbf8;
+  --bg: #F8FAFC;
+  --surface: #ffffff;
+  --border: #e2e8f0;
+  --border-light: #edf2f7;
+  --text: #1e293b;
+  --text-muted: #64748b;
+  --text-faint: #94a3b8;
+  --danger: #dc2626;
+  --danger-light: #fee2e2;
+  --success: #16a34a;
+  --success-light: #dcfce7;
+  --warning: #d97706;
+  --warning-light: #fef3c7;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4 { font-weight: 650; letter-spacing: -0.01em; margin: 0 0 8px; }
+input, select, textarea, button { font-family: inherit; font-size: 14px; }
+
+.login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(160deg, var(--primary) 0%, var(--primary-dark) 100%); }
+.login-card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-md); padding: 36px 34px; width: 360px; }
+.login-card p { color: var(--text-muted); margin-top: 0; }
+.login-card label { display: block; margin-bottom: 14px; font-size: 13px; color: var(--text-muted); }
+.login-card input { display: block; width: 100%; margin-top: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.login-card .hint { font-size: 11.5px; color: var(--text-faint); margin-top: 16px; margin-bottom: 0; }
+.error { background: var(--danger-light); color: var(--danger); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 13px; margin-bottom: 14px; }
+
+.btn { background: var(--primary); color: #fff; border: none; border-radius: var(--radius-sm); padding: 10px 18px; font-weight: 600; cursor: pointer; font-size: 14px; }
+.btn:hover { background: var(--primary-dark); }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+.btn.big { padding: 18px; font-size: 17px; width: 100%; border-radius: var(--radius); }
+.btn.danger { background: var(--danger); }
+.btn-icon { background: none; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 8px; cursor: pointer; }
+
+.app-shell { min-height: 100vh; display: flex; flex-direction: column; }
+.topbar { background: var(--primary); color: #fff; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; }
+.topbar strong { font-size: 15px; }
+.topbar .who { font-size: 12.5px; opacity: 0.85; }
+.content { flex: 1; padding: 20px; max-width: 1680px; width: 100%; margin: 0 auto; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); margin-bottom: 16px; }
+.card__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-muted); }
+.form-field input, .form-field select, .form-field textarea { padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); background: var(--surface); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border-light); }
+th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+
+.badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 99px; }
+.badge--planned { background: var(--border-light); color: var(--text-muted); }
+.badge--dispatched { background: var(--accent-light); color: var(--accent); }
+.badge--in_progress { background: var(--warning-light); color: var(--warning); }
+.badge--closed { background: var(--success-light); color: var(--success); }
+.badge--cancelled { background: var(--danger-light); color: var(--danger); }
+
+.stop-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-light); }
+.stop-row .seq { width: 24px; height: 24px; border-radius: 50%; background: var(--primary-light); color: var(--primary); display: flex; align-items: center; justify-content: center; font-size: 11.5px; font-weight: 700; flex-shrink: 0; }
+
+.muted { color: var(--text-muted); font-size: 13px; }
+.toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+
+.error.warn { background: var(--warning-light); color: var(--warning); }
+
+/* ---------------------------------------------------------------------
+   Bulk Water fast tank-fill POS — one compact screen, no dashboard, no
+   wizard. Built for an operator to complete a transaction in seconds.
+   --------------------------------------------------------------------- */
+
+.pos-screen { max-width: 640px; margin: 0 auto; }
+
+.pos-success { background: var(--success-light); color: var(--success); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.pos-success--fade { animation: pos-success-fade 2s ease forwards; }
+@keyframes pos-success-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+
+.pos-row { margin-bottom: 10px; }
+.pos-row label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-muted); font-weight: 600; }
+.pos-row select { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; }
+
+.pos-driverline { margin-top: 6px; font-size: 13.5px; display: flex; align-items: center; gap: 8px; }
+.pos-driverline select { padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; font-size: 13.5px; flex: 1; }
+.pos-driverline__link { background: none; border: none; color: var(--primary); text-decoration: underline; cursor: pointer; font-size: 12.5px; padding: 0; margin-left: auto; }
+
+.pos-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 10px; }
+
+.pos-field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 120px; }
+.pos-field--wide { flex-basis: 100%; }
+.pos-field label { font-size: 11.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.pos-field input, .pos-field select { padding: 10px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 16px; }
+
+.pos-notfound { position: absolute; top: 100%; left: 0; margin-top: 3px; color: var(--danger); font-size: 12.5px; font-weight: 600; }
+
+/* Route Session status — the hard gate between "warehouse loaded this truck"
+   and "a sale is actually possible". Sits right under the truck selector so
+   the operator sees it before ever touching the HNO field. */
+.pos-session { border-radius: var(--radius-sm); padding: 10px 14px; margin-bottom: 10px; }
+.pos-session--open { background: var(--success-light); border: 1px solid var(--success); }
+.pos-session--closed { background: var(--danger-light); border: 1px solid var(--danger); }
+.pos-session__title { font-weight: 700; font-size: 13.5px; margin-bottom: 6px; }
+.pos-session--open .pos-session__title { color: var(--success); }
+.pos-session--closed .pos-session__title { color: var(--danger); }
+.pos-session__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 4px 16px; font-size: 12.5px; color: var(--text-muted); }
+.pos-session--closed p { margin: 0; font-size: 13px; color: var(--danger); }
+
+/* Today's Driver Summary — a single-line QuickBooks-style status bar, not a
+   dashboard: one row, small text, no card padding to speak of, so it never
+   pushes the page taller or competes with the actual sale form. */
+.pos-driversummary { display: flex; flex-wrap: nowrap; gap: 16px; overflow-x: auto; padding: 6px 10px; margin-bottom: 10px; background: var(--primary-light); border-radius: var(--radius-sm); font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.pos-driversummary strong { color: var(--text); font-size: 13px; margin-left: 4px; }
+
+/* Import completion screen — a QuickBooks-Desktop-style plain-language
+   summary shown after IMPORT finishes: green for successful counts, orange
+   for skipped/warnings, red only for genuine errors. Centered and free of
+   any raw database text, so non-technical office staff read it at a glance. */
+.import-done { max-width: 480px; margin: 0 auto; text-align: center; }
+
+.import-done__banner { background: var(--success-light); color: var(--success); font-size: 16px; font-weight: 700; padding: 14px; border-radius: var(--radius-sm); margin-bottom: 18px; }
+
+.import-done__card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 20px 22px; text-align: left; }
+.import-done__title { text-align: center; font-size: 13px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+.import-done__rule { border-top: 1px dashed var(--border); margin: 10px 0; }
+
+.import-done__row { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; font-size: 15px; }
+.import-done__row span { color: var(--text-muted); }
+.import-done__row strong { font-size: 18px; }
+
+.import-done__reasons { margin-top: 8px; padding-top: 6px; }
+.import-done__reasons-title { font-size: 12px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px; }
+.import-done__reason-row { display: flex; justify-content: space-between; padding: 4px 0 4px 14px; font-size: 13.5px; }
+.import-done__reason-row span::before { content: '• '; }
+.import-done__reason-row span { color: var(--text-muted); }
+
+.import-done__value--success { color: var(--success); }
+.import-done__value--warning { color: var(--warning); }
+.import-done__value--danger { color: var(--danger); }
+
+.import-done__actions { display: flex; gap: 10px; justify-content: center; margin-top: 20px; flex-wrap: wrap; }
+
+.pos-tankinfo { flex-basis: 100%; display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--text-muted); padding-top: 4px; border-top: 1px dashed var(--border-light); }
+
+/* Last Water Delivery — read-only, color-coded purely by how long it's been
+   since this customer's last completed Bulk Water sale. */
+.pos-delivery { flex-basis: 100%; font-size: 13px; font-weight: 600; padding: 4px 8px; border-radius: var(--radius-sm); margin-top: 6px; }
+.pos-delivery--green { background: var(--success-light); color: var(--success); }
+.pos-delivery--yellow { background: var(--warning-light); color: var(--warning); }
+.pos-delivery--orange { background: #fed7aa; color: #c2410c; }
+.pos-delivery--red { background: var(--danger-light); color: var(--danger); }
+.pos-delivery--none { background: var(--border-light); color: var(--text-muted); }
+
+.pos-box--totals { background: var(--primary-light); }
+.pos-box--totals > div { flex: 1; min-width: 140px; display: flex; flex-direction: column; gap: 2px; }
+.pos-box--totals span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); font-weight: 600; }
+.pos-box--totals strong { font-size: 22px; }
+
+.pos-actions { display: flex; gap: 10px; }
+.btn-pos { flex: 1; padding: 16px; font-size: 16px; font-weight: 700; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
+.btn-pos:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-pos--primary { background: #2563eb; color: #fff; border: none; }
+.btn-pos--primary:hover:not(:disabled) { background: #1d4ed8; }
