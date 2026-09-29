@@ -1,5 +1,5 @@
 import type { AssumptionReader } from '../assumptions';
-import type { RawWaterInput } from '../types';
+import type { PretreatmentInput, RawWaterInput } from '../types';
 import { CalcStep, Findings, isNum, nextStandard, round } from './common';
 import type { PretreatmentResult } from './pretreatment';
 import { ptIn } from './pretreatment';
@@ -18,11 +18,13 @@ export interface DosingLine {
   pumpCapacityLh: number;
   tankVolumeL: number;
   tankSelectedL: number;
+  /** calculated = from water analysis / design basis; supplier = dose from supplier projection; indicative = typical value, NOT a prescription */
+  doseStatus: 'calculated' | 'supplier' | 'indicative';
   steps: CalcStep[];
   notes: string[];
 }
 
-export function calcDosing(w: RawWaterInput, prod: ProductionResult, pt: PretreatmentResult, hours: number, A: AssumptionReader, f: Findings): DosingLine[] {
+export function calcDosing(w: RawWaterInput, prod: ProductionResult, pt: PretreatmentResult, ptInput: PretreatmentInput, hours: number, A: AssumptionReader, f: Findings): DosingLine[] {
   const lines: DosingLine[] = [];
   const days = A.n('chemical_autonomy_days');
   const margin = A.n('dosing_pump_margin');
@@ -31,6 +33,7 @@ export function calcDosing(w: RawWaterInput, prod: ProductionResult, pt: Pretrea
     id: DosingLine['id'], chemical: string, point: string, flow: number, dose: number, basis: string,
     kind: { type: 'liquid'; strengthPct: number; density: number; dilutionPct: number } | { type: 'powder'; purityPct: number; solutionPct: number },
     notes: string[],
+    doseStatus: DosingLine['doseStatus'] = 'calculated',
   ) => {
     const activeKgH = (dose * flow) / 1000;
     let productKgH: number;
@@ -62,7 +65,7 @@ export function calcDosing(w: RawWaterInput, prod: ProductionResult, pt: Pretrea
     lines.push({
       id, chemical, dosingPoint: point, treatedFlowM3h: round(flow, 2), doseMgL: round(dose, 2), doseBasis: basis,
       productKgH: round(productKgH, 4), productKgDay: round(productKgH * hours, 2), solutionLh: round(solutionLh, 2),
-      pumpCapacityLh: pump ?? round(solutionLh * margin, 1), tankVolumeL: round(tankL, 0), tankSelectedL: tankSel ?? round(tankL, 0), steps, notes,
+      pumpCapacityLh: pump ?? round(solutionLh * margin, 1), tankVolumeL: round(tankL, 0), tankSelectedL: tankSel ?? round(tankL, 0), doseStatus, steps, notes,
     });
   };
 
@@ -93,10 +96,15 @@ export function calcDosing(w: RawWaterInput, prod: ProductionResult, pt: Pretrea
       { type: 'powder', purityPct: A.n('smbs_purity'), solutionPct: A.n('smbs_solution') }, ['Prepare fresh solution weekly (oxidises in air). Verify with ORP < 200 mV.']);
   }
   if (ptIn(pt, 'antiscalant')) {
-    const dose = A.n('antiscalant_dose');
-    line('antiscalant', 'Antiscalant', 'RO feed, upstream of cartridge filter', feed, dose, `${dose} mg/L as product (assumption – confirm with supplier projection)`,
+    const sup = ptInput.antiscalantDoseMgL;
+    const hasSup = typeof sup === 'number' && isFinite(sup) && sup > 0;
+    const dose = hasSup ? (sup as number) : A.n('antiscalant_dose');
+    if (!hasSup)
+      f.review('Dosing', 'antiscalant_supplier', `Antiscalant dose requires supplier confirmation – ${dose} mg/L is an INDICATIVE typical value used only to size the dosing pump and tank. Enter the supplier's projected dose.`);
+    line('antiscalant', 'Antiscalant', 'RO feed, upstream of cartridge filter', feed, dose,
+      hasSup ? `${dose} mg/L as product (supplier projection – project input)` : `${dose} mg/L – INDICATIVE only (typical range 2–5 mg/L), supplier projection required`,
       { type: 'liquid', strengthPct: 100, density: A.n('antiscalant_density'), dilutionPct: A.n('antiscalant_dilution') },
-      ['Dose must be verified by the antiscalant supplier software for this water analysis and recovery.']);
+      ['Antiscalant product and dose must come from the supplier projection for this water analysis and recovery.'], hasSup ? 'supplier' : 'indicative');
   }
   if (ptIn(pt, 'post_chlorination')) {
     line('post_chlorination', `Sodium hypochlorite ${A.n('naocl_strength')} % (post-chlorination)`, 'Permeate line to product tank', prod.permeateM3h, A.n('postchlor_dose'), `${A.n('postchlor_dose')} mg/L residual`,

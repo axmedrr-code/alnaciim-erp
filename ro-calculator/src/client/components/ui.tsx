@@ -181,28 +181,46 @@ export function FindingsList({ findings, sections, showOk = true, empty = 'No fi
   );
 }
 
-export function StepsTable({ steps }: { steps: CalcStep[] }) {
+export function StepsTable({ steps, compact = false }: { steps: CalcStep[]; compact?: boolean }) {
+  const fmtV = (v: number | string) => (typeof v === 'number' ? v.toLocaleString('en-US', { maximumFractionDigits: 4 }) : v);
   return (
-    <table className="table formula-table">
-      <thead>
-        <tr>
-          <th>Parameter</th>
-          <th>Formula</th>
-          <th className="num">Value</th>
-          <th>Unit</th>
-        </tr>
-      </thead>
-      <tbody>
-        {steps.map((s, i) => (
-          <tr key={i}>
-            <td>{s.label}</td>
-            <td className="formula">{s.formula}</td>
-            <td className="num strong">{typeof s.value === 'number' ? s.value.toLocaleString('en-US', { maximumFractionDigits: 4 }) : s.value}</td>
-            <td>{s.unit}</td>
+    <div className="table-scroll">
+      <table className="table formula-table">
+        <thead>
+          <tr>
+            <th>Parameter</th>
+            {!compact && <th>Input</th>}
+            <th>Formula</th>
+            {!compact && <th>Assumptions</th>}
+            <th className="num">Result</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {steps.map((s, i) => (
+            <tr key={i}>
+              <td>{s.label}</td>
+              {!compact && <td className="small">{s.inputs ?? '–'}</td>}
+              <td className="formula">{s.formula}</td>
+              {!compact && <td className="small muted">{s.assumptions ?? '–'}</td>}
+              <td className="num strong nowrap">
+                {fmtV(s.value)} {s.unit}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Collapsible "How was this calculated?" block showing Input / Formula / Assumptions / Result. */
+export function HowCalc({ steps, title = 'How was this calculated?' }: { steps: CalcStep[] | undefined; title?: string }) {
+  if (!steps || !steps.length) return null;
+  return (
+    <details className="howcalc">
+      <summary>ⓘ {title}</summary>
+      <StepsTable steps={steps} />
+    </details>
   );
 }
 

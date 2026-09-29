@@ -244,3 +244,21 @@ details > summary { cursor: pointer; margin: 6px 0; }
   .card { break-inside: avoid; box-shadow: none; }
   body, :root { background: #fff; }
 }
+
+/* ---------------- phase 2 */
+.howcalc { margin-top: 6px; font-size: 12px; }
+.howcalc > summary { color: var(--teal); font-weight: 600; cursor: pointer; font-size: 12px; }
+.howcalc .table { font-size: 12px; background: #fff; }
+.tile .howcalc { margin-top: 6px; }
+.tile .howcalc[open] { position: relative; z-index: 5; }
+.tile .howcalc[open] .table-scroll { position: absolute; left: -12px; top: 18px; width: min(760px, 80vw); background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(15,23,42,.18); padding: 6px; }
+.demo-badge { display: inline-block; background: #b91c1c; color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .05em; border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
+.lab-required { color: var(--crit); font-weight: 800; }
+.stage-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.stage-card h4 { margin: 0 0 6px; color: var(--navy); }
+.el-table td, .el-table th { font-size: 12px; padding: 4px 6px; }
+.curve-chart { width: 100%; max-width: 560px; height: auto; background: #fbfdff; border: 1px solid var(--line); border-radius: 8px; }
+.array-editor { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.array-editor input { width: 70px; }
+.cat-label { font-size: 11px; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.dose-indicative { color: var(--rev); font-weight: 700; }

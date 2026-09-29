@@ -113,6 +113,8 @@ export interface MembraneDesignInput {
   designFluxLmh: Num;
   /** null = automatic staging from recovery */
   stages: number | null;
+  /** Manual array: number of vessels in each stage, e.g. [5, 2]. null = automatic. */
+  vesselsPerStage: number[] | null;
 }
 
 export type PipeSectionId =
@@ -125,12 +127,37 @@ export type PipeSectionId =
   | 'reject_to_drain'
   | 'product_to_distribution';
 
+export type FittingType =
+  | 'elbow90' | 'elbow45' | 'tee_line' | 'tee_branch' | 'gate_valve' | 'ball_valve' | 'butterfly_valve' | 'globe_valve' | 'check_valve' | 'strainer' | 'entrance' | 'exit';
+
+export const FITTING_LABELS: Record<FittingType, string> = {
+  elbow90: '90° elbow', elbow45: '45° elbow', tee_line: 'Tee (run)', tee_branch: 'Tee (branch)', gate_valve: 'Gate valve', ball_valve: 'Ball valve',
+  butterfly_valve: 'Butterfly valve', globe_valve: 'Globe valve', check_valve: 'Check valve', strainer: 'Strainer / foot valve', entrance: 'Entrance', exit: 'Exit',
+};
+
 export interface PipeSectionOverride {
   material?: string;
   maxVelocity?: number;
   lengthM?: number;
   elevationM?: number;
   designPressureBar?: number;
+  /** Force a nominal diameter instead of sizing from velocity. */
+  dn?: number;
+  /** Fitting counts – replaces the default fitting set of the section when given. */
+  fittings?: Partial<Record<FittingType, number>>;
+}
+
+export type PumpDutyId = 'raw' | 'feed' | 'hp' | 'product' | 'cip';
+
+export interface PumpDutyOverride {
+  /** Pump selected from the Pump Library (with manufacturer curve) for operating-point check. */
+  libraryPumpId?: number | null;
+  /** Pump efficiency at duty point, % (overrides the assumption). */
+  efficiencyPct?: number;
+  /** Design flow override, m³/h. */
+  flowM3h?: number;
+  /** Additional equipment/valve loss, bar (e.g. flow meter, control valve, strainer). */
+  extraLossBar?: number;
 }
 
 export interface HydraulicsInput {
@@ -138,7 +165,9 @@ export interface HydraulicsInput {
   productPumpEnabled: boolean;
   distributionFlowM3h: Num;
   distributionHeadM: number;
+  frictionMethod: 'darcy' | 'hazen';
   pipes: Partial<Record<PipeSectionId, PipeSectionOverride>>;
+  pumps: Partial<Record<PumpDutyId, PumpDutyOverride>>;
 }
 
 export type PretreatmentItemId =
@@ -166,6 +195,8 @@ export interface PretreatmentInput {
   scaleControl: 'auto' | 'antiscalant' | 'antiscalant_acid' | 'softener';
   postDisinfection: 'none' | 'uv' | 'chlorination' | 'uv_chlorination';
   cip: boolean;
+  /** Antiscalant dose from the supplier's projection, mg/L as product. null = not yet confirmed. */
+  antiscalantDoseMgL: Num;
 }
 
 export interface TankInput {
@@ -244,10 +275,26 @@ export interface MembraneSpec {
   testTdsMgL: Num;
   testRecoveryPct: Num;
   maxFeedFlowM3h: Num;
+  /** Recommended operating range */
+  recFluxMinLmh: Num;
+  recFluxMaxLmh: Num;
+  maxElementRecoveryPct: Num;
+  minConcentrateM3h: Num;
+  maxElementDpBar: Num;
+  /** DEMO = sample values, not a manufacturer datasheet */
+  isDemo: boolean;
+  dataSource: string;
   notes: string;
 }
 
 export type PumpType = 'borehole' | 'feed' | 'high_pressure' | 'product' | 'cip' | 'dosing';
+
+export interface PumpCurvePoint {
+  flowM3h: number;
+  headM: number;
+  efficiencyPct: number | null;
+  npshrM: number | null;
+}
 
 export interface PumpSpec {
   id: number;
@@ -261,6 +308,9 @@ export interface PumpSpec {
   shutoffHeadM: number;
   motorKw: number;
   efficiencyPct: number;
+  /** Manufacturer curve entered by the user (flow, head, efficiency, NPSHr). */
+  curve: PumpCurvePoint[];
+  isDemo: boolean;
   notes: string;
 }
 
@@ -277,6 +327,7 @@ export interface PipeSize {
 export interface PipeMaterial {
   name: string;
   roughnessMm: number;
+  hazenC: number;
   description: string;
 }
 

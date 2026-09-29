@@ -1,5 +1,6 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { mergeAssumptions, type Assumptions } from '../shared/assumptions';
+import { normalizeDesign } from '../shared/sample';
 import type { DesignContext, DesignInput, MembraneSpec, PipeMaterial, PipeSize, PumpSpec } from '../shared/types';
 import { DEFAULT_UNITS, type DisplayUnits } from '../shared/units';
 import type { Db } from './db/client';
@@ -37,7 +38,7 @@ export class Repo {
   getProject(id: number): (ProjectRow & { data: DesignInput }) | null {
     const r = this.db.select().from(projects).where(eq(projects.id, id)).get();
     if (!r) return null;
-    const data = JSON.parse(r.data) as DesignInput;
+    const data = normalizeDesign(JSON.parse(r.data) as DesignInput);
     data.assumptions = mergeAssumptions(data.assumptions);
     return { ...r, data };
   }
@@ -114,7 +115,7 @@ export class Repo {
     return this.db.select().from(pipeMaterials).orderBy(asc(pipeMaterials.name)).all();
   }
   upsertPipeMaterial(m: PipeMaterial) {
-    return this.db.insert(pipeMaterials).values(m).onConflictDoUpdate({ target: pipeMaterials.name, set: { roughnessMm: m.roughnessMm, description: m.description } }).returning().get();
+    return this.db.insert(pipeMaterials).values(m).onConflictDoUpdate({ target: pipeMaterials.name, set: { roughnessMm: m.roughnessMm, hazenC: m.hazenC, description: m.description } }).returning().get();
   }
   deletePipeMaterial(name: string) {
     this.db.delete(pipeSizes).where(eq(pipeSizes.material, name)).run();

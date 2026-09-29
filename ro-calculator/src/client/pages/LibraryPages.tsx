@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import type { MembraneSpec, PumpSpec, PumpType } from '../../shared/types';
 import { api } from '../api';
+import { PumpCurveChart } from '../components/PumpCurveChart';
 import { Card, NumField, PageHeader, SelectField, TextField } from '../components/ui';
 import { useApp } from '../context';
 
 type MembraneDraft = Omit<MembraneSpec, 'id'>;
 const EMPTY_MEMBRANE: MembraneDraft = {
   manufacturer: '', model: '', membraneType: 'BWRO', diameterIn: 8, activeAreaM2: null, nominalFlowM3d: null, saltRejectionPct: null, maxPressureBar: null, maxTempC: 45,
-  phMin: 2, phMax: 11, testPressureBar: 15.5, testTdsMgL: 2000, testRecoveryPct: 15, maxFeedFlowM3h: null, notes: '',
+  phMin: 2, phMax: 11, testPressureBar: null, testTdsMgL: null, testRecoveryPct: null, maxFeedFlowM3h: null, recFluxMinLmh: null, recFluxMaxLmh: null,
+  maxElementRecoveryPct: null, minConcentrateM3h: null, maxElementDpBar: null, isDemo: false, dataSource: '', notes: '',
 };
 
 export function MembraneLibraryPage() {
@@ -32,7 +34,7 @@ export function MembraneLibraryPage() {
     <>
       <PageHeader
         title="Membrane Library"
-        subtitle="Local membrane database. Values are typical datasheet values – verify against current manufacturer datasheets. Missing specifications are flagged in designs."
+        subtitle="Local membrane database. Seeded records are DEMO values (not manufacturer data) – add your membranes by entering the manufacturer datasheet values. Missing specifications and DEMO data are flagged in designs."
         actions={
           <>
             <input className="search" placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -60,6 +62,21 @@ export function MembraneLibraryPage() {
             <NumField label="Test solution TDS (NaCl)" unit="mg/L" importance="required" value={edit.d.testTdsMgL} onChange={(v) => set('testTdsMgL', v)} />
             <NumField label="Test recovery" unit="%" value={edit.d.testRecoveryPct} onChange={(v) => set('testRecoveryPct', v)} />
             <NumField label="Max feed flow per vessel" unit="m³/h" value={edit.d.maxFeedFlowM3h} onChange={(v) => set('maxFeedFlowM3h', v)} />
+          </div>
+          <h4>Recommended operating range (from datasheet / design guidelines)</h4>
+          <div className="form-grid">
+            <NumField label="Recommended min. average flux" unit="LMH" value={edit.d.recFluxMinLmh} onChange={(v) => set('recFluxMinLmh', v)} />
+            <NumField label="Recommended max. average flux" unit="LMH" value={edit.d.recFluxMaxLmh} onChange={(v) => set('recFluxMaxLmh', v)} />
+            <NumField label="Max element recovery" unit="%" value={edit.d.maxElementRecoveryPct} onChange={(v) => set('maxElementRecoveryPct', v)} />
+            <NumField label="Min concentrate flow per vessel" unit="m³/h" value={edit.d.minConcentrateM3h} onChange={(v) => set('minConcentrateM3h', v)} />
+            <NumField label="Max pressure drop per element" unit="bar" value={edit.d.maxElementDpBar} onChange={(v) => set('maxElementDpBar', v)} />
+          </div>
+          <div className="form-grid">
+            <TextField label="Data source (datasheet name, revision, date)" value={edit.d.dataSource} onChange={(v) => set('dataSource', v)} placeholder="e.g. Manufacturer datasheet form no. …, rev. …" />
+            <label className="checkbox">
+              <input type="checkbox" checked={edit.d.isDemo} onChange={(e) => set('isDemo', e.target.checked)} />
+              <span>DEMO data (not verified manufacturer values) – designs using it are flagged</span>
+            </label>
           </div>
           <TextField label="Notes" value={edit.d.notes} onChange={(v) => set('notes', v)} />
           <div className="btn-row">
@@ -96,7 +113,8 @@ export function MembraneLibraryPage() {
                 <tr key={m.id}>
                   <td>{m.manufacturer}</td>
                   <td>
-                    <b>{m.model}</b> {m.builtin ? <span className="pill small">seed</span> : <span className="pill pill-in small">user</span>}
+                    <b>{m.model}</b> {m.isDemo ? <span className="demo-badge">DEMO</span> : <span className="pill pill-in small">datasheet</span>}
+                    {m.dataSource && <div className="muted small">{m.dataSource}</div>}
                   </td>
                   <td>{m.membraneType}</td>
                   <td className="num">{m.diameterIn}</td>
@@ -115,7 +133,7 @@ export function MembraneLibraryPage() {
                     <button className="btn btn-xs" onClick={() => setEdit({ id: m.id, d: { ...m } })}>
                       Edit
                     </button>
-                    <button className="btn btn-xs" onClick={() => setEdit({ d: { ...m, model: `${m.model} (copy)` } })}>
+                    <button className="btn btn-xs" onClick={() => setEdit({ d: { ...m, model: `${m.model} (copy)`, isDemo: m.isDemo } })}>
                       Copy
                     </button>
                     <button
@@ -176,7 +194,7 @@ export function PumpLibraryPage() {
     <>
       <PageHeader
         title="Pump Library"
-        subtitle="Duty points used to pre-select pumps. The simplified curve H(Q) = H₀ − (H₀ − H_rated)·(Q/Q_rated)² is used – always confirm with the published pump curve."
+        subtitle="Pumps with manufacturer curves (flow, head, efficiency, NPSHr). Select a pump for each duty on the design's Pumps tab to check the operating point. Seeded pumps have DEMO curves only."
         actions={
           <>
             <select value={type} onChange={(e) => setType(e.target.value as PumpType)}>
@@ -189,7 +207,7 @@ export function PumpLibraryPage() {
             </select>
             <button
               className="btn btn-primary"
-              onClick={() => setEdit({ d: { pumpType: 'high_pressure', manufacturer: '', model: '', ratedFlowM3h: 10, ratedHeadM: 100, minFlowM3h: 3, maxFlowM3h: 13, shutoffHeadM: 125, motorKw: 5.5, efficiencyPct: 70, notes: '' } })}
+              onClick={() => setEdit({ d: { pumpType: 'high_pressure', manufacturer: '', model: '', ratedFlowM3h: 10, ratedHeadM: 100, minFlowM3h: 3, maxFlowM3h: 13, shutoffHeadM: 125, motorKw: 5.5, efficiencyPct: 70, notes: '', curve: [], isDemo: false } })}
             >
               + Add pump
             </button>
@@ -211,6 +229,67 @@ export function PumpLibraryPage() {
             <NumField label="Efficiency at BEP" unit="%" allowNull={false} value={edit.d.efficiencyPct} onChange={(v) => set('efficiencyPct', v ?? 0)} />
           </div>
           <TextField label="Notes" value={edit.d.notes} onChange={(v) => set('notes', v)} />
+          <label className="checkbox">
+            <input type="checkbox" checked={edit.d.isDemo} onChange={(e) => set('isDemo', e.target.checked)} />
+            <span>DEMO data (not a manufacturer curve)</span>
+          </label>
+          <h4>Manufacturer pump curve (enter points in increasing flow order)</h4>
+          <div className="grid-2">
+            <div>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Flow m³/h</th>
+                    <th>Head m</th>
+                    <th>Efficiency %</th>
+                    <th>NPSHr m</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {edit.d.curve.map((c, i) => (
+                    <tr key={i}>
+                      {(['flowM3h', 'headM', 'efficiencyPct', 'npshrM'] as const).map((k) => (
+                        <td key={k}>
+                          <input
+                            className="cell num"
+                            type="number"
+                            step="any"
+                            value={c[k] ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value === '' ? null : Number(e.target.value);
+                              const curve = edit.d.curve.map((x, j) => (j === i ? { ...x, [k]: k === 'flowM3h' || k === 'headM' ? v ?? 0 : v } : x));
+                              set('curve', curve);
+                            }}
+                          />
+                        </td>
+                      ))}
+                      <td>
+                        <button className="btn btn-xs btn-danger" onClick={() => set('curve', edit.d.curve.filter((_, j) => j !== i))}>
+                          ✕
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="btn-row">
+                <button
+                  className="btn btn-sm"
+                  onClick={() => {
+                    const last = edit.d.curve[edit.d.curve.length - 1];
+                    set('curve', [...edit.d.curve, { flowM3h: last ? last.flowM3h + Math.max(1, edit.d.ratedFlowM3h * 0.2) : 0, headM: last ? last.headM : edit.d.shutoffHeadM, efficiencyPct: null, npshrM: null }]);
+                  }}
+                >
+                  + curve point
+                </button>
+                <button className="btn btn-sm btn-ghost" onClick={() => set('curve', [])}>
+                  clear curve
+                </button>
+              </div>
+            </div>
+            <PumpCurveChart curve={edit.d.curve} />
+          </div>
           <div className="btn-row">
             <button className="btn btn-primary" onClick={save}>
               Save
@@ -234,6 +313,7 @@ export function PumpLibraryPage() {
               <th className="num">Range m³/h</th>
               <th className="num">Motor kW</th>
               <th className="num">η %</th>
+              <th>Curve</th>
               <th />
             </tr>
           </thead>
@@ -243,7 +323,7 @@ export function PumpLibraryPage() {
                 <td>{PUMP_TYPES.find((t) => t.value === p.pumpType)?.label}</td>
                 <td>{p.manufacturer}</td>
                 <td>
-                  <b>{p.model}</b>
+                  <b>{p.model}</b> {p.isDemo && <span className="demo-badge">DEMO</span>}
                 </td>
                 <td className="num">{p.ratedFlowM3h}</td>
                 <td className="num">{p.ratedHeadM}</td>
@@ -253,6 +333,7 @@ export function PumpLibraryPage() {
                 </td>
                 <td className="num">{p.motorKw}</td>
                 <td className="num">{p.efficiencyPct}</td>
+                <td>{p.curve.length >= 2 ? `${p.curve.length} pts` : <span className="danger">none</span>}</td>
                 <td className="nowrap">
                   <button className="btn btn-xs" onClick={() => setEdit({ id: p.id, d: { ...p } })}>
                     Edit

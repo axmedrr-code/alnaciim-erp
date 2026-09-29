@@ -1,49 +1,60 @@
 /**
- * Seed data for the local libraries. All values are typical published datasheet
- * values or generic engineering data. They are stored in the local SQLite database
+ * Seed data for the local libraries. Membrane and pump records are DEMO data
+ * (clearly labelled, not manufacturer data); pipe data are standard dimensions. They are stored in the local SQLite database
  * and can be edited by the user – they are NOT hard-coded into the calculations.
  */
-import type { MembraneSpec, PipeMaterial, PipeSize, PumpSpec, PumpType } from './types';
+import type { MembraneSpec, PipeMaterial, PipeSize, PumpCurvePoint, PumpSpec, PumpType } from './types';
 
-const DS = 'Typical published datasheet values – verify against the current manufacturer datasheet.';
+export const DEMO_SOURCE = 'DEMO sample values for testing the software – NOT a manufacturer datasheet. Replace with the actual manufacturer datasheet values before design use.';
 
-export const SEED_MEMBRANES: Omit<MembraneSpec, 'id'>[] = [
-  { manufacturer: 'DuPont FilmTec', model: 'BW30-400', membraneType: 'BWRO', diameterIn: 8, activeAreaM2: 37.2, nominalFlowM3d: 40.0, saltRejectionPct: 99.5, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 15.5, testTdsMgL: 2000, testRecoveryPct: 15, maxFeedFlowM3h: 17, notes: DS },
-  { manufacturer: 'DuPont FilmTec', model: 'BW30HR-440i', membraneType: 'BWRO', diameterIn: 8, activeAreaM2: 40.9, nominalFlowM3d: 48.0, saltRejectionPct: 99.7, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 15.5, testTdsMgL: 2000, testRecoveryPct: 15, maxFeedFlowM3h: 17, notes: DS },
-  { manufacturer: 'DuPont FilmTec', model: 'BW30XFR-400/34i', membraneType: 'BWRO', diameterIn: 8, activeAreaM2: 37.2, nominalFlowM3d: 40.0, saltRejectionPct: 99.65, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 15.5, testTdsMgL: 2000, testRecoveryPct: 15, maxFeedFlowM3h: 17, notes: DS },
-  { manufacturer: 'DuPont FilmTec', model: 'XLE-440', membraneType: 'BWRO-LE', diameterIn: 8, activeAreaM2: 40.9, nominalFlowM3d: 48.0, saltRejectionPct: 99.0, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 6.9, testTdsMgL: 500, testRecoveryPct: 15, maxFeedFlowM3h: 17, notes: `Extra-low-energy element. ${DS}` },
-  { manufacturer: 'DuPont FilmTec', model: 'SW30HRLE-440i', membraneType: 'SWRO', diameterIn: 8, activeAreaM2: 40.9, nominalFlowM3d: 31.0, saltRejectionPct: 99.8, maxPressureBar: 83, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 55.2, testTdsMgL: 32000, testRecoveryPct: 8, maxFeedFlowM3h: 14, notes: DS },
-  { manufacturer: 'DuPont FilmTec', model: 'BW30-4040', membraneType: 'BWRO', diameterIn: 4, activeAreaM2: 7.2, nominalFlowM3d: 9.1, saltRejectionPct: 99.5, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 15.5, testTdsMgL: 2000, testRecoveryPct: 15, maxFeedFlowM3h: 3.6, notes: `4-inch element for small systems. ${DS}` },
-  { manufacturer: 'Hydranautics', model: 'ESPA2-LD', membraneType: 'BWRO-LE', diameterIn: 8, activeAreaM2: 37.2, nominalFlowM3d: 37.9, saltRejectionPct: 99.6, maxPressureBar: 41.6, maxTempC: 45, phMin: 2, phMax: 10.6, testPressureBar: 10.3, testTdsMgL: 1500, testRecoveryPct: 15, maxFeedFlowM3h: 17, notes: DS },
-  { manufacturer: 'Hydranautics', model: 'CPA5-LD', membraneType: 'BWRO', diameterIn: 8, activeAreaM2: 37.2, nominalFlowM3d: 41.6, saltRejectionPct: 99.7, maxPressureBar: 41.6, maxTempC: 45, phMin: 2, phMax: 10.6, testPressureBar: 15.5, testTdsMgL: 1500, testRecoveryPct: 15, maxFeedFlowM3h: 17, notes: DS },
-  { manufacturer: 'Hydranautics', model: 'LFC3-LD', membraneType: 'BWRO-LF', diameterIn: 8, activeAreaM2: 37.2, nominalFlowM3d: 41.6, saltRejectionPct: 99.7, maxPressureBar: 41.6, maxTempC: 45, phMin: 2, phMax: 10.6, testPressureBar: 15.5, testTdsMgL: 1500, testRecoveryPct: 15, maxFeedFlowM3h: 17, notes: `Low-fouling element. ${DS}` },
-  { manufacturer: 'Hydranautics', model: 'SWC5-LD', membraneType: 'SWRO', diameterIn: 8, activeAreaM2: 37.2, nominalFlowM3d: 37.5, saltRejectionPct: 99.8, maxPressureBar: 82.7, maxTempC: 45, phMin: 2, phMax: 10.6, testPressureBar: 55.2, testTdsMgL: 32000, testRecoveryPct: 10, maxFeedFlowM3h: 14, notes: DS },
-  { manufacturer: 'Toray', model: 'TM720D-400', membraneType: 'BWRO', diameterIn: 8, activeAreaM2: 37.2, nominalFlowM3d: 36.0, saltRejectionPct: 99.8, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 15.5, testTdsMgL: 2000, testRecoveryPct: 15, maxFeedFlowM3h: 17, notes: DS },
-  { manufacturer: 'Toray', model: 'TM820V-400', membraneType: 'SWRO', diameterIn: 8, activeAreaM2: 37.2, nominalFlowM3d: 24.6, saltRejectionPct: 99.86, maxPressureBar: 83, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 55.2, testTdsMgL: 32000, testRecoveryPct: 8, maxFeedFlowM3h: 14, notes: DS },
-  { manufacturer: 'Vontron', model: 'LP22-8040', membraneType: 'BWRO-LE', diameterIn: 8, activeAreaM2: 37.2, nominalFlowM3d: 41.6, saltRejectionPct: 99.5, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 10.3, testTdsMgL: 1500, testRecoveryPct: 15, maxFeedFlowM3h: 17, notes: DS },
+type M = Omit<MembraneSpec, 'id'>;
+const demo = (m: Omit<M, 'isDemo' | 'dataSource' | 'notes' | 'manufacturer'> & { notes?: string }): M => ({ manufacturer: 'DEMO', isDemo: true, dataSource: DEMO_SOURCE, ...m, notes: m.notes ?? '' });
+
+/**
+ * DEMO membrane records. They are generic, clearly-labelled sample values (not copied from, and not
+ * claimed to represent, any manufacturer's product). Enter real datasheet values in the Membrane Library.
+ */
+export const SEED_MEMBRANES: M[] = [
+  demo({ model: 'DEMO-BW-8040-400 (brackish, standard)', membraneType: 'BWRO', diameterIn: 8, activeAreaM2: 37.2, nominalFlowM3d: 40, saltRejectionPct: 99.5, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 15.5, testTdsMgL: 2000, testRecoveryPct: 15, maxFeedFlowM3h: 16, recFluxMinLmh: 12, recFluxMaxLmh: 30, maxElementRecoveryPct: 18, minConcentrateM3h: 3.0, maxElementDpBar: 1.0 }),
+  demo({ model: 'DEMO-BW-8040-440 (brackish, high area)', membraneType: 'BWRO', diameterIn: 8, activeAreaM2: 40.9, nominalFlowM3d: 44, saltRejectionPct: 99.6, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 15.5, testTdsMgL: 2000, testRecoveryPct: 15, maxFeedFlowM3h: 16, recFluxMinLmh: 12, recFluxMaxLmh: 30, maxElementRecoveryPct: 18, minConcentrateM3h: 3.0, maxElementDpBar: 1.0 }),
+  demo({ model: 'DEMO-LE-8040-400 (low energy)', membraneType: 'BWRO-LE', diameterIn: 8, activeAreaM2: 37.2, nominalFlowM3d: 42, saltRejectionPct: 99.3, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 10.3, testTdsMgL: 1500, testRecoveryPct: 15, maxFeedFlowM3h: 16, recFluxMinLmh: 12, recFluxMaxLmh: 30, maxElementRecoveryPct: 18, minConcentrateM3h: 3.0, maxElementDpBar: 1.0 }),
+  demo({ model: 'DEMO-SW-8040-400 (seawater)', membraneType: 'SWRO', diameterIn: 8, activeAreaM2: 37.2, nominalFlowM3d: 28, saltRejectionPct: 99.75, maxPressureBar: 83, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 55.2, testTdsMgL: 32000, testRecoveryPct: 8, maxFeedFlowM3h: 14, recFluxMinLmh: 8, recFluxMaxLmh: 17, maxElementRecoveryPct: 15, minConcentrateM3h: 3.0, maxElementDpBar: 1.0 }),
+  demo({ model: 'DEMO-BW-4040 (brackish, 4 inch)', membraneType: 'BWRO', diameterIn: 4, activeAreaM2: 7.9, nominalFlowM3d: 9.0, saltRejectionPct: 99.5, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 15.5, testTdsMgL: 2000, testRecoveryPct: 15, maxFeedFlowM3h: 3.6, recFluxMinLmh: 12, recFluxMaxLmh: 30, maxElementRecoveryPct: 18, minConcentrateM3h: 0.7, maxElementDpBar: 1.0 }),
 ];
 
-function pumpSeries(type: PumpType, prefix: string, rows: [number, number, number, number, number][], note: string): Omit<PumpSpec, 'id'>[] {
+/** DEMO pump curve: H(Q) parabola through shut-off and rated point, efficiency peaking at rated flow, NPSHr rising with flow. */
+export function demoCurve(q: number, h: number, h0: number, eff: number, npshAtBep: number | null): PumpCurvePoint[] {
+  const pts: PumpCurvePoint[] = [];
+  for (const x of [0, 0.3, 0.5, 0.7, 0.85, 1, 1.15, 1.3]) {
+    const flow = Math.round(q * x * 100) / 100;
+    const head = Math.round((h0 - (h0 - h) * x * x) * 10) / 10;
+    const e = x === 0 ? 0 : Math.round(eff * (2 * x - x * x) * 10) / 10;
+    const npshr = npshAtBep === null ? null : Math.round((npshAtBep * (0.5 + 0.5 * x * x)) * 10) / 10;
+    pts.push({ flowM3h: flow, headM: head, efficiencyPct: e, npshrM: npshr });
+  }
+  return pts;
+}
+
+function pumpSeries(type: PumpType, prefix: string, rows: [number, number, number, number, number][], note: string, npsh: number | null): Omit<PumpSpec, 'id'>[] {
   return rows.map(([q, h, h0, kw, eff]) => ({
-    pumpType: type, manufacturer: 'Generic', model: `${prefix}-${q}/${h}`, ratedFlowM3h: q, ratedHeadM: h, minFlowM3h: Math.round(q * 0.3 * 10) / 10, maxFlowM3h: Math.round(q * 1.3 * 10) / 10,
-    shutoffHeadM: h0, motorKw: kw, efficiencyPct: eff, notes: note,
+    pumpType: type, manufacturer: 'DEMO', model: `DEMO-${prefix}-${q}/${h}`, ratedFlowM3h: q, ratedHeadM: h, minFlowM3h: Math.round(q * 0.3 * 10) / 10, maxFlowM3h: Math.round(q * 1.3 * 10) / 10,
+    shutoffHeadM: h0, motorKw: kw, efficiencyPct: eff, curve: demoCurve(q, h, h0, eff, npsh), isDemo: true, notes: `${note} ${DEMO_SOURCE}`,
   }));
 }
 
-const GEN = 'Generic duty-point entry for pre-selection. Replace/extend with real manufacturer models and curves.';
 export const SEED_PUMPS: Omit<PumpSpec, 'id'>[] = [
-  ...pumpSeries('borehole', 'SUB', [[5, 100, 150, 3, 60], [10, 100, 150, 5.5, 65], [17, 100, 150, 7.5, 68], [30, 100, 150, 15, 72], [46, 100, 150, 22, 74], [60, 100, 150, 30, 75], [77, 110, 160, 37, 76], [95, 120, 170, 45, 77]], `6"/8" submersible borehole pump. ${GEN}`),
-  ...pumpSeries('feed', 'EN', [[5, 30, 40, 1.1, 55], [10, 35, 45, 2.2, 62], [20, 35, 45, 3, 68], [30, 35, 45, 5.5, 70], [45, 40, 50, 7.5, 72], [60, 40, 52, 11, 74], [90, 40, 52, 15, 76], [150, 45, 55, 30, 78]], `End-suction centrifugal pump. ${GEN}`),
-  ...pumpSeries('high_pressure', 'VMS', [[5, 150, 190, 4, 62], [10, 160, 200, 7.5, 67], [16, 170, 210, 11, 70], [20, 180, 220, 15, 72], [32, 120, 150, 15, 74], [32, 180, 220, 22, 74], [45, 120, 150, 22, 76], [45, 180, 225, 37, 76], [64, 190, 235, 55, 77], [90, 200, 245, 75, 78], [125, 200, 245, 110, 79]], `Vertical multistage SS316 pump – stage count can be adjusted by the manufacturer. ${GEN}`),
-  ...pumpSeries('product', 'TR', [[5, 40, 50, 1.1, 55], [10, 40, 52, 2.2, 62], [20, 45, 57, 4, 66], [30, 45, 57, 5.5, 70], [45, 50, 62, 11, 72], [60, 50, 62, 15, 74]], `Centrifugal transfer/booster pump. ${GEN}`),
-  ...pumpSeries('cip', 'CIP', [[10, 40, 50, 2.2, 58], [20, 40, 50, 4, 62], [30, 40, 52, 5.5, 65], [45, 40, 52, 7.5, 68], [60, 40, 52, 11, 70], [80, 40, 52, 15, 72]], `SS316/PP centrifugal CIP pump. ${GEN}`),
+  ...pumpSeries('borehole', 'SUB', [[5, 100, 150, 3, 60], [10, 100, 150, 5.5, 65], [17, 100, 150, 7.5, 68], [30, 100, 150, 15, 72], [46, 100, 150, 22, 74], [60, 100, 150, 30, 75], [77, 110, 160, 37, 76], [95, 120, 170, 45, 77]], 'Submersible borehole pump.', null),
+  ...pumpSeries('feed', 'EN', [[5, 30, 40, 1.1, 55], [10, 35, 45, 2.2, 62], [20, 35, 45, 3, 68], [30, 35, 45, 5.5, 70], [45, 50, 62, 11, 72], [60, 40, 52, 11, 74], [90, 40, 52, 15, 76], [150, 45, 55, 30, 78]], 'End-suction centrifugal pump.', 3),
+  ...pumpSeries('high_pressure', 'VMS', [[5, 150, 190, 4, 62], [10, 160, 200, 7.5, 67], [16, 170, 210, 11, 70], [20, 180, 220, 15, 72], [32, 120, 150, 15, 74], [32, 180, 220, 22, 74], [45, 130, 165, 22, 76], [45, 180, 225, 37, 76], [64, 190, 235, 55, 77], [90, 200, 245, 75, 78], [125, 200, 245, 110, 79]], 'Vertical multistage pump.', 4),
+  ...pumpSeries('product', 'TR', [[5, 40, 50, 1.1, 55], [10, 40, 52, 2.2, 62], [20, 45, 57, 4, 66], [30, 45, 57, 5.5, 70], [45, 50, 62, 11, 72], [60, 50, 62, 15, 74]], 'Transfer/booster pump.', 3),
+  ...pumpSeries('cip', 'CIP', [[10, 40, 50, 2.2, 58], [20, 40, 50, 4, 62], [30, 40, 52, 5.5, 65], [45, 40, 52, 7.5, 68], [60, 40, 52, 11, 70], [80, 40, 52, 15, 72]], 'CIP pump.', 3),
 ];
 
 export const SEED_PIPE_MATERIALS: PipeMaterial[] = [
-  { name: 'PVC-U PN16', roughnessMm: 0.0015, description: 'Unplasticised PVC, SDR 13.6, metric OD (ISO 1452). Low-pressure lines.' },
-  { name: 'HDPE PE100 SDR11 (PN16)', roughnessMm: 0.007, description: 'Polyethylene PE100, SDR 11 (ISO 4427). Borehole risers, buried transfer lines.' },
-  { name: 'Stainless Steel 316L Sch10S', roughnessMm: 0.015, description: 'ASME B36.19 Sch10S. High-pressure brackish RO lines.' },
-  { name: 'Stainless Steel 316L Sch40S', roughnessMm: 0.015, description: 'ASME B36.19 Sch40S. Seawater/high-pressure RO lines.' },
+  { name: 'PVC-U PN16', roughnessMm: 0.0015, hazenC: 150, description: 'Unplasticised PVC, SDR 13.6, metric OD (ISO 1452). Low-pressure lines.' },
+  { name: 'HDPE PE100 SDR11 (PN16)', roughnessMm: 0.007, hazenC: 150, description: 'Polyethylene PE100, SDR 11 (ISO 4427). Borehole risers, buried transfer lines.' },
+  { name: 'Stainless Steel 316L Sch10S', roughnessMm: 0.015, hazenC: 140, description: 'ASME B36.19 Sch10S. High-pressure brackish RO lines.' },
+  { name: 'Stainless Steel 316L Sch40S', roughnessMm: 0.015, hazenC: 140, description: 'ASME B36.19 Sch40S. Seawater/high-pressure RO lines.' },
 ];
 
 const PLASTIC_OD: [number, number][] = [[20, 15], [25, 20], [32, 25], [40, 32], [50, 40], [63, 50], [75, 65], [90, 80], [110, 100], [140, 125], [160, 150], [225, 200], [280, 250], [315, 300], [400, 400]];

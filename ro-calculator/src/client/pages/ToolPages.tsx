@@ -6,10 +6,11 @@ import { convertFlow, convertLength, convertPower, convertPressure, FLOW_UNITS, 
 import { api } from '../api';
 import { AssumptionsEditor } from '../components/AssumptionsEditor';
 import { PfdDiagram } from '../components/PfdDiagram';
-import { BomEditor, CostPanel, PretreatmentResults, SummaryDashboard } from '../components/Results';
+import { BomEditor, ChemistryResults, CostPanel, PretreatmentResults, SummaryDashboard } from '../components/Results';
 import { Card, Counts, Disclaimer, Empty, FindingsList, KV, LevelBadge, NumField, PageHeader, ProjectPicker, SelectField, StepsTable, TextField } from '../components/ui';
 import { useApp, useProjectDesign } from '../context';
-import type { PretreatmentItemId } from '../../shared/types';
+import type { FittingType, PretreatmentItemId } from '../../shared/types';
+import { FITTING_LABELS } from '../../shared/types';
 
 // ------------------------------------------------------------------ Pipe calculator
 export function PipeCalculatorPage() {
@@ -22,20 +23,22 @@ export function PipeCalculatorPage() {
   const [elev, setElev] = useState<number | null>(0);
   const [pressure, setPressure] = useState<number | null>(6);
   const [temp, setTemp] = useState<number | null>(25);
+  const [method, setMethod] = useState<'darcy' | 'hazen'>('darcy');
+  const [fittings, setFittings] = useState<Partial<Record<FittingType, number>>>({ elbow90: 4, gate_valve: 2, check_valve: 1 });
   const [catMat, setCatMat] = useState('');
   const [newSize, setNewSize] = useState({ dn: '', od: '', wall: '', rating: '' });
-  const [newMat, setNewMat] = useState({ name: '', roughness: '', description: '' });
+  const [newMat, setNewMat] = useState({ name: '', roughness: '', hazenC: '140', description: '' });
 
   const res = useMemo(() => {
     if (!library || !settings || flow == null) return null;
     const A = new AssumptionReader(settings.assumptions);
     return sizePipe(
-      { flowM3h: convertFlow(flow, flowUnit, 'm3/h'), material, maxVelocity: vmax ?? 0, lengthM: length ?? 0, elevationM: elev ?? 0, designPressureBar: pressure ?? 0, temperatureC: temp ?? 25, fittingsPct: A.n('fittings_allowance') },
+      { flowM3h: convertFlow(flow, flowUnit, 'm3/h'), material, maxVelocity: vmax ?? 0, lengthM: length ?? 0, elevationM: elev ?? 0, designPressureBar: pressure ?? 0, temperatureC: temp ?? 25, fittings, method },
       library.pipeSizes,
       library.pipeMaterials,
       A,
     );
-  }, [library, settings, flow, flowUnit, material, vmax, length, elev, pressure, temp]);
+  }, [library, settings, flow, flowUnit, material, vmax, length, elev, pressure, temp, method, fittings]);
 
   if (!library || !settings) return <p className="muted">Loading…</p>;
   const cat = library.pipeSizes.filter((p) => p.material === (catMat || library.pipeMaterials[0]?.name));
@@ -54,7 +57,16 @@ export function PipeCalculatorPage() {
             <NumField label="Design pressure" unit="bar" value={pressure} onChange={setPressure} allowNull={false} />
             <NumField label="Water temperature" unit="°C" value={temp} onChange={setTemp} allowNull={false} />
           </div>
-          <p className="muted small">Fittings allowance {String(settings.assumptions.fittings_allowance)} % (Settings → assumptions).</p>
+          <SelectField label="Friction method" value={method} options={[{ value: 'darcy', label: 'Darcy–Weisbach (Swamee–Jain)' }, { value: 'hazen', label: 'Hazen–Williams' }]} onChange={setMethod} />
+          <div className="inline-form">
+            <span className="cat-label">Fittings (count), K-values in Settings → assumptions:</span>
+            {(Object.keys(FITTING_LABELS) as FittingType[]).map((ft) => (
+              <label key={ft} style={{ minWidth: 90 }}>
+                {FITTING_LABELS[ft]}
+                <input type="number" min={0} step={1} value={fittings[ft] ?? 0} onChange={(e) => setFittings({ ...fittings, [ft]: Math.max(0, Number(e.target.value) || 0) })} />
+              </label>
+            ))}
+          </div>
         </Card>
         <Card title="Result" actions={res && <LevelBadge level={res.status} />}>
           {res ? (
@@ -66,8 +78,13 @@ export function PipeCalculatorPage() {
                   ['Recommended DN', res.dn ? `DN ${res.dn}` : '–'],
                   ['Outer / internal diameter', `${res.outerDiameterMm ?? '–'} / ${res.innerDiameterMm ?? '–'} mm`],
                   ['Velocity', fmt(res.velocity, 2, 'm/s')],
-                  ['Friction loss', `${fmt(res.frictionLossM, 2, 'm')} (${fmt(res.lossPer100m, 2, 'm/100 m')})`],
-                  ['Total loss incl. fittings', `${fmt(res.totalLossM, 2, 'm')} = ${fmt(res.totalLossBar, 3, 'bar')}`],
+                  ['Reynolds number', res.reynolds.toLocaleString()],
+                  ['Friction factor (Darcy)', String(res.frictionFactor)],
+                  ['Friction loss – Darcy–Weisbach', fmt(res.darcyLossM, 3, 'm')],
+                  ['Friction loss – Hazen–Williams', res.hazenLossM == null ? '–' : `${fmt(res.hazenLossM, 3, 'm')} (C = ${res.hazenC})`],
+                  [`Friction loss used (${res.method === 'hazen' ? 'H-W' : 'D-W'})`, `${fmt(res.frictionLossM, 3, 'm')} (${fmt(res.lossPer100m, 3, 'm/100 m')})`],
+                  ['Minor losses ΣK·v²/2g', `${fmt(res.minorLossM, 3, 'm')} (ΣK = ${res.sumK})`],
+                  ['Total loss', `${fmt(res.totalLossM, 3, 'm')} = ${fmt(res.totalLossBar, 4, 'bar')}`],
                   ['Static head (elevation)', fmt(res.staticHeadM, 1, 'm')],
                   ['Total head required', fmt(res.totalLossM + res.staticHeadM, 2, 'm')],
                   ['Pressure rating', res.pressureRatingBar ? `${res.pressureRatingBar} bar` : '–'],
@@ -169,6 +186,10 @@ export function PipeCalculatorPage() {
             <input type="number" step="any" value={newMat.roughness} onChange={(e) => setNewMat({ ...newMat, roughness: e.target.value })} />
           </label>
           <label>
+            Hazen–Williams C
+            <input type="number" step="any" value={newMat.hazenC} onChange={(e) => setNewMat({ ...newMat, hazenC: e.target.value })} />
+          </label>
+          <label>
             Description
             <input value={newMat.description} onChange={(e) => setNewMat({ ...newMat, description: e.target.value })} />
           </label>
@@ -176,8 +197,8 @@ export function PipeCalculatorPage() {
             className="btn btn-sm"
             onClick={async () => {
               try {
-                await api.savePipeMaterial({ name: newMat.name, roughnessMm: Number(newMat.roughness), description: newMat.description });
-                setNewMat({ name: '', roughness: '', description: '' });
+                await api.savePipeMaterial({ name: newMat.name, roughnessMm: Number(newMat.roughness), hazenC: Number(newMat.hazenC) || 140, description: newMat.description });
+                setNewMat({ name: '', roughness: '', hazenC: '140', description: '' });
                 await reloadLibrary();
                 toast('Material saved – now add its sizes');
               } catch (e) {
@@ -266,6 +287,25 @@ function ActiveHeader({ title, subtitle, dirty, save, saving, extra }: { title: 
         </>
       }
     />
+  );
+}
+
+export function ChemistryPage() {
+  const { project, result } = useActive();
+  return (
+    <>
+      <ActiveHeader title="Water Chemistry" subtitle="Ionic balance, TDS, osmotic pressure and scaling indicators for the selected project. Missing data is shown as LABORATORY DATA REQUIRED – nothing is assumed." />
+      {!project || !result ? (
+        <Empty>Select a project above.</Empty>
+      ) : (
+        <>
+          <p>
+            <Link to={`/design/${project.id}?tab=water`}>Edit water analysis →</Link>
+          </p>
+          <ChemistryResults result={result} />
+        </>
+      )}
+    </>
   );
 }
 

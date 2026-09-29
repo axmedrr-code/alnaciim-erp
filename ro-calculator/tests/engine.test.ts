@@ -42,6 +42,7 @@ describe('30 m³/h sample project', () => {
     expect(r.membrane.feedPressureBar!).toBeGreaterThan(8);
     expect(r.membrane.feedPressureBar!).toBeLessThan(18);
     expect(r.membrane.feedPressureBar!).toBeLessThan(BW30_400.maxPressureBar!);
+    expect(r.membrane.simulated).toBe(true);
     expect(r.membrane.permeateTdsMgL!).toBeGreaterThan(5);
     expect(r.membrane.permeateTdsMgL!).toBeLessThan(250);
     // concentrate TDS by mass balance ≈ feed / (1 − R)
@@ -59,14 +60,15 @@ describe('30 m³/h sample project', () => {
     // P = ρgQH/η/1000 : check shaft power
     const shaft = hydraulicKw(hp.designFlowM3h, hp.designHeadM) / (hp.efficiencyPct / 100);
     expect(hp.shaftKw).toBeCloseTo(shaft, 1);
-    expect(hp.motorKw).toBeGreaterThanOrEqual(hp.shaftKw * 1.15 - 1e-6);
-    expect(A.list('std_motors_kw')).toContain(hp.motorKw);
+    expect(hp.requiredMotorKw).toBeCloseTo(hp.shaftKw * 1.15, 2);
+    expect(hp.standardMotorKw).toBeGreaterThanOrEqual(hp.requiredMotorKw);
+    expect(A.list('std_motors_kw')).toContain(hp.standardMotorKw);
   });
 
   it('raw water pump: static head from dynamic level + elevation + tank', () => {
     const raw = r.pumps.find((p) => p.id === 'raw')!;
     expect(raw.designFlowM3h).toBeCloseTo(40 * 1.1 * 1.05, 2);
-    const statics = raw.components.filter((c) => /Static lift|Elevation|tank inlet/.test(c.label)).reduce((s, c) => s + c.headM, 0);
+    const statics = raw.components.filter((c) => c.category === 'static').reduce((s, c) => s + c.headM, 0);
     expect(statics).toBeCloseTo(55 + 5 + 4, 3);
     expect(raw.calculatedHeadM).toBeGreaterThan(64);
     expect(raw.designHeadM).toBeCloseTo(raw.calculatedHeadM * 1.1, 0);
@@ -110,7 +112,7 @@ describe('30 m³/h sample project', () => {
     expect(r.pfd.main.map((n) => n.id)).toEqual(expect.arrayContaining(['raw_pump', 'raw_tank', 'cartridge', 'hp_pump', 'ro', 'permeate_tank']));
   });
 
-  it('has no critical findings', () => {
+  it('has no critical findings (only review items such as DEMO data / supplier confirmation)', () => {
     expect(codes(r, 'critical')).toEqual([]);
     expect(r.counts.ok).toBeGreaterThan(10);
   });
@@ -119,7 +121,7 @@ describe('30 m³/h sample project', () => {
 describe('pipe sizing', () => {
   const sizes = seedPipeSizes().map((p, i) => ({ id: i + 1, ...p }));
   it('calculates diameter from flow and velocity, then picks the next catalogue size', () => {
-    const r = sizePipe({ flowM3h: 40, material: 'PVC-U PN16', maxVelocity: 1.5, lengthM: 100, elevationM: 0, designPressureBar: 6, temperatureC: 25, fittingsPct: 25 }, sizes, SEED_PIPE_MATERIALS, A);
+    const r = sizePipe({ flowM3h: 40, material: 'PVC-U PN16', maxVelocity: 1.5, lengthM: 100, elevationM: 0, designPressureBar: 6, temperatureC: 25, fittings: { elbow90: 4, gate_valve: 1 }, method: 'darcy' }, sizes, SEED_PIPE_MATERIALS, A);
     const reqId = Math.sqrt((4 * (40 / 3600)) / (Math.PI * 1.5)) * 1000;
     expect(r.requiredIdMm).toBeCloseTo(reqId, 0);
     expect(r.innerDiameterMm!).toBeGreaterThanOrEqual(reqId);
@@ -131,13 +133,13 @@ describe('pipe sizing', () => {
   });
 
   it('larger flow gives a larger DN (not hard-coded)', () => {
-    const a = sizePipe({ flowM3h: 5, material: 'PVC-U PN16', maxVelocity: 1.5, lengthM: 10, elevationM: 0, designPressureBar: 6, temperatureC: 25, fittingsPct: 0 }, sizes, SEED_PIPE_MATERIALS, A);
-    const b = sizePipe({ flowM3h: 150, material: 'PVC-U PN16', maxVelocity: 1.5, lengthM: 10, elevationM: 0, designPressureBar: 6, temperatureC: 25, fittingsPct: 0 }, sizes, SEED_PIPE_MATERIALS, A);
+    const a = sizePipe({ flowM3h: 5, material: 'PVC-U PN16', maxVelocity: 1.5, lengthM: 10, elevationM: 0, designPressureBar: 6, temperatureC: 25, fittings: {}, method: 'darcy' }, sizes, SEED_PIPE_MATERIALS, A);
+    const b = sizePipe({ flowM3h: 150, material: 'PVC-U PN16', maxVelocity: 1.5, lengthM: 10, elevationM: 0, designPressureBar: 6, temperatureC: 25, fittings: {}, method: 'darcy' }, sizes, SEED_PIPE_MATERIALS, A);
     expect(b.dn!).toBeGreaterThan(a.dn!);
   });
 
   it('Darcy–Weisbach loss matches a hand calculation', () => {
-    const r = sizePipe({ flowM3h: 40, material: 'Stainless Steel 316L Sch10S', maxVelocity: 2.5, lengthM: 50, elevationM: 0, designPressureBar: 15, temperatureC: 20, fittingsPct: 0 }, sizes, SEED_PIPE_MATERIALS, A);
+    const r = sizePipe({ flowM3h: 40, material: 'Stainless Steel 316L Sch10S', maxVelocity: 2.5, lengthM: 50, elevationM: 0, designPressureBar: 15, temperatureC: 20, fittings: {}, method: 'darcy' }, sizes, SEED_PIPE_MATERIALS, A);
     const d = r.innerDiameterMm! / 1000;
     const v = 40 / 3600 / ((Math.PI * d * d) / 4);
     const re = (v * d) / (waterViscosity(20) / 998);
@@ -147,9 +149,9 @@ describe('pipe sizing', () => {
   });
 
   it('flags pressure above the pipe rating and flow above the largest size', () => {
-    const hp = sizePipe({ flowM3h: 40, material: 'PVC-U PN16', maxVelocity: 2.5, lengthM: 10, elevationM: 0, designPressureBar: 60, temperatureC: 25, fittingsPct: 0 }, sizes, SEED_PIPE_MATERIALS, A);
+    const hp = sizePipe({ flowM3h: 40, material: 'PVC-U PN16', maxVelocity: 2.5, lengthM: 10, elevationM: 0, designPressureBar: 60, temperatureC: 25, fittings: {}, method: 'darcy' }, sizes, SEED_PIPE_MATERIALS, A);
     expect(hp.status).toBe('critical');
-    const huge = sizePipe({ flowM3h: 5000, material: 'PVC-U PN16', maxVelocity: 1.5, lengthM: 10, elevationM: 0, designPressureBar: 6, temperatureC: 25, fittingsPct: 0 }, sizes, SEED_PIPE_MATERIALS, A);
+    const huge = sizePipe({ flowM3h: 5000, material: 'PVC-U PN16', maxVelocity: 1.5, lengthM: 10, elevationM: 0, designPressureBar: 6, temperatureC: 25, fittings: {}, method: 'darcy' }, sizes, SEED_PIPE_MATERIALS, A);
     expect(huge.status).toBe('critical');
     expect(huge.messages.some((m) => /parallel/.test(m.text))).toBe(true);
   });

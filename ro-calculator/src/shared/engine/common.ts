@@ -16,6 +16,20 @@ export interface CalcStep {
   formula: string;
   value: number | string;
   unit: string;
+  /** Input values substituted into the formula ("How was this calculated?") */
+  inputs?: string;
+  /** Assumptions used by this step */
+  assumptions?: string;
+}
+
+export function step(label: string, formula: string, value: number | string, unit: string, inputs?: string, assumptions?: string): CalcStep {
+  return { label, formula, value: typeof value === 'number' ? round(value, 4) : value, unit, inputs, assumptions };
+}
+
+/** Compact number formatting for trace strings. */
+export function n(v: number | null | undefined, d = 2): string {
+  if (v == null || !isFinite(v)) return '–';
+  return String(round(v, d));
 }
 
 export class Findings {

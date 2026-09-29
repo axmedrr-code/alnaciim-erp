@@ -30,7 +30,7 @@ describe('database & seed', () => {
   it('creates the SQLite file with seeded libraries and the 30 m³/h sample project', async () => {
     expect(fs.existsSync(dbFile)).toBe(true);
     const lib = await request(app).get('/api/library').expect(200);
-    expect(lib.body.membranes.length).toBeGreaterThanOrEqual(10);
+    expect(lib.body.membranes.length).toBe(5);
     expect(lib.body.pumps.length).toBeGreaterThan(20);
     expect(lib.body.pipeSizes.length).toBeGreaterThan(40);
     const list = await request(app).get('/api/projects').expect(200);
@@ -106,11 +106,41 @@ describe('projects: create, save, load, duplicate, export, import, delete', () =
     const exp = await request(app).get(`/api/projects/${id}/export`).expect(200);
     expect(exp.headers['content-disposition']).toMatch(/attachment/);
     expect(exp.body.format).toBe('ro-calculator-project');
-    expect(exp.body.membrane.model).toBe('BW30-400');
+    expect(exp.body.membrane.isDemo).toBe(true);
     const imp = (await request(app).post('/api/projects/import').send(exp.body).expect(201)).body;
     expect(imp.data.production.recoveryPct).toBe(70);
     expect(imp.data.membrane.membraneId).toBe(exp.body.project.membrane.membraneId);
     await request(app).post('/api/projects/import').send({ format: 'something else' }).expect(400);
+  });
+
+  it('imports a project saved by version 1 (missing the new fields) and calculates it', async () => {
+    const exp = (await request(app).get(`/api/projects/${id}/export`).expect(200)).body;
+    delete exp.project.membrane.vesselsPerStage;
+    delete exp.project.hydraulics.frictionMethod;
+    delete exp.project.hydraulics.pumps;
+    delete exp.project.pretreatment.antiscalantDoseMgL;
+    const imp = (await request(app).post('/api/projects/import').send(exp).expect(201)).body;
+    expect(imp.data.hydraulics.frictionMethod).toBe('darcy');
+    expect(imp.data.membrane.vesselsPerStage).toBeNull();
+    const r = (await request(app).get(`/api/projects/${imp.id}/calculate`).expect(200)).body;
+    expect(r.membrane.simulated).toBe(true);
+  });
+
+  it('saves a manual array, pump selection and supplier antiscalant dose', async () => {
+    const p = (await request(app).get(`/api/projects/${id}`).expect(200)).body;
+    const lib = (await request(app).get('/api/library').expect(200)).body;
+    p.data.membrane.vesselsPerStage = [6, 3];
+    p.data.hydraulics.pumps = { hp: { libraryPumpId: lib.pumps.find((x: { pumpType: string }) => x.pumpType === 'high_pressure').id, efficiencyPct: 74 } };
+    p.data.hydraulics.frictionMethod = 'hazen';
+    p.data.hydraulics.pipes = { hp_to_ro: { dn: 80, fittings: { elbow90: 2 } } };
+    p.data.pretreatment.antiscalantDoseMgL = 2.5;
+    await request(app).put(`/api/projects/${id}`).send({ data: p.data }).expect(200);
+    const r = (await request(app).get(`/api/projects/${id}/calculate`).expect(200)).body;
+    expect(r.membrane.vesselsPerStage).toEqual([6, 3]);
+    expect(r.pipes.find((x: { id: string }) => x.id === 'hp_to_ro').dn).toBe(80);
+    expect(r.pipes[0].method).toBe('hazen');
+    expect(r.dosing.find((x: { id: string }) => x.id === 'antiscalant').doseStatus).toBe('supplier');
+    expect(r.pumps.find((x: { id: string }) => x.id === 'hp').selectedPump).not.toBeNull();
   });
 
   it('deletes a project', async () => {
@@ -138,20 +168,77 @@ describe('projects: create, save, load, duplicate, export, import, delete', () =
   });
 });
 
+describe('DEMO seed data', () => {
+  it('all seeded membranes and pumps are marked DEMO with a data-source note', async () => {
+    const lib = (await request(app).get('/api/library').expect(200)).body;
+    for (const m of lib.membranes.filter((x: { builtin: boolean }) => x.builtin)) {
+      expect(m.isDemo).toBe(true);
+      expect(m.dataSource).toMatch(/DEMO/);
+      expect(m.model).toMatch(/^DEMO/);
+    }
+    for (const p of lib.pumps.filter((x: { builtin: boolean }) => x.builtin)) {
+      expect(p.isDemo).toBe(true);
+      expect(p.curve.length).toBeGreaterThan(3);
+    }
+  });
+});
+
+describe('database upgrade from version 1', () => {
+  it('applies migration 0001 to a v1 database and marks old seed data as DEMO', async () => {
+    const d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'rocalc-v1-'));
+    const mig = path.join(d2, 'mig');
+    fs.mkdirSync(path.join(mig, 'meta'), { recursive: true });
+    const src = path.join(__dirname, '..', 'drizzle');
+    fs.copyFileSync(path.join(src, '0000_init.sql'), path.join(mig, '0000_init.sql'));
+    const journal = JSON.parse(fs.readFileSync(path.join(src, 'meta', '_journal.json'), 'utf8'));
+    journal.entries = journal.entries.slice(0, 1);
+    fs.writeFileSync(path.join(mig, 'meta', '_journal.json'), JSON.stringify(journal));
+    const file = path.join(d2, 'v1.db');
+    const Database = (await import('better-sqlite3')).default;
+    const { drizzle } = await import('drizzle-orm/better-sqlite3');
+    const { migrate } = await import('drizzle-orm/better-sqlite3/migrator');
+    const raw = new Database(file);
+    migrate(drizzle(raw), { migrationsFolder: mig });
+    raw.prepare("INSERT INTO membranes (manufacturer, model, membrane_type, active_area_m2, nominal_flow_m3d, salt_rejection_pct, max_pressure_bar, test_pressure_bar, test_tds_mg_l, test_recovery_pct, builtin) VALUES ('Old','Old-8040','BWRO',37,40,99.5,41,15.5,2000,15,1)").run();
+    raw.prepare("INSERT INTO pumps (pump_type, manufacturer, model, rated_flow_m3h, rated_head_m, min_flow_m3h, max_flow_m3h, shutoff_head_m, motor_kw, efficiency_pct, builtin) VALUES ('feed','Generic','EN-1',10,35,3,13,45,2.2,62,1)").run();
+    raw.close();
+    const { db, sqlite } = openDb(file);
+    seedIfEmpty(db, { sampleProject: false });
+    const lib = (await request(createApp(db, { staticDir: null })).get('/api/library').expect(200)).body;
+    const old = lib.membranes.find((m: { model: string }) => m.model === 'Old-8040');
+    expect(old.isDemo).toBe(true);
+    expect(old.dataSource).toMatch(/NOT verified/);
+    const pump = lib.pumps.find((p: { model: string }) => p.model === 'EN-1');
+    expect(pump.isDemo).toBe(true);
+    expect(pump.curve.length).toBeGreaterThan(3);
+    sqlite.close();
+    fs.rmSync(d2, { recursive: true, force: true });
+  });
+});
+
 describe('libraries', () => {
   it('membrane CRUD with validation and in-use protection', async () => {
-    const m = { manufacturer: 'Test', model: 'T-8040', membraneType: 'BWRO', diameterIn: 8, activeAreaM2: 37, nominalFlowM3d: 40, saltRejectionPct: 99.5, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 15.5, testTdsMgL: 2000, testRecoveryPct: 15, maxFeedFlowM3h: null, notes: '' };
+    const m = { manufacturer: 'Test', model: 'T-8040', membraneType: 'BWRO', diameterIn: 8, activeAreaM2: 37, nominalFlowM3d: 40, saltRejectionPct: 99.5, maxPressureBar: 41, maxTempC: 45, phMin: 2, phMax: 11, testPressureBar: 15.5, testTdsMgL: 2000, testRecoveryPct: 15, maxFeedFlowM3h: null, recFluxMaxLmh: 28, dataSource: 'Datasheet rev. A', notes: '' };
     const c = (await request(app).post('/api/membranes').send(m).expect(201)).body;
+    expect(c.isDemo).toBe(false);
+    expect(c.recFluxMaxLmh).toBe(28);
     await request(app).put(`/api/membranes/${c.id}`).send({ ...m, nominalFlowM3d: 42 }).expect(200);
     await request(app).post('/api/membranes').send({ ...m, model: '' }).expect(400);
     await request(app).delete(`/api/membranes/${c.id}`).expect(204);
-    const bw = (await request(app).get('/api/membranes').expect(200)).body.find((x: { model: string }) => x.model === 'BW30-400');
-    await request(app).delete(`/api/membranes/${bw.id}`).expect(409);
+    const bw = (await request(app).get('/api/membranes').expect(200)).body[0];
+    const sampleProj = (await request(app).get('/api/projects/1').expect(200)).body;
+    expect(bw.id).toBeDefined();
+    const usedId = sampleProj.data.membrane.membraneId;
+    await request(app).delete(`/api/membranes/${usedId}`).expect(409);
   });
 
-  it('pump CRUD with range validation', async () => {
-    const p = { pumpType: 'high_pressure', manufacturer: 'X', model: 'HP-1', ratedFlowM3h: 10, ratedHeadM: 120, minFlowM3h: 3, maxFlowM3h: 13, shutoffHeadM: 150, motorKw: 7.5, efficiencyPct: 70, notes: '' };
+  it('pump CRUD with manufacturer curve and validation', async () => {
+    const curve = [{ flowM3h: 0, headM: 150, efficiencyPct: 0, npshrM: 1 }, { flowM3h: 10, headM: 120, efficiencyPct: 70, npshrM: 2.5 }, { flowM3h: 13, headM: 100, efficiencyPct: 66, npshrM: 3.5 }];
+    const p = { pumpType: 'high_pressure', manufacturer: 'X', model: 'HP-1', ratedFlowM3h: 10, ratedHeadM: 120, minFlowM3h: 3, maxFlowM3h: 13, shutoffHeadM: 150, motorKw: 7.5, efficiencyPct: 70, notes: '', curve };
     const c = (await request(app).post('/api/pumps').send(p).expect(201)).body;
+    expect(c.curve).toHaveLength(3);
+    expect(c.isDemo).toBe(false);
+    await request(app).post('/api/pumps').send({ ...p, curve: [curve[1], curve[0]] }).expect(400);
     await request(app).post('/api/pumps').send({ ...p, shutoffHeadM: 50 }).expect(400);
     await request(app).delete(`/api/pumps/${c.id}`).expect(204);
   });

@@ -1,24 +1,30 @@
 import { Fragment, useState } from 'react';
-import type { BomLine, DesignResult, PretreatmentItem } from '../../shared/engine';
-import { PT_STATUS_LABEL } from '../../shared/engine';
-import type { CostCategory, DesignInput } from '../../shared/types';
+import type { BomLine, DesignResult, PretreatmentItem, PumpResult, StageResult } from '../../shared/engine';
+import { HEAD_CATEGORY_LABEL, LAB_REQUIRED, PT_STATUS_LABEL } from '../../shared/engine';
+import type { CostCategory, DesignInput, FittingType, PumpDutyId } from '../../shared/types';
+import { FITTING_LABELS } from '../../shared/types';
 import { fmt, fmtFlow, fmtPower, fmtPressure, type DisplayUnits } from '../../shared/units';
 import { useApp } from '../context';
-import { Card, Counts, FindingsList, KV, LevelBadge, StepsTable } from './ui';
+import { PumpCurveChart } from './PumpCurveChart';
+import { Card, Counts, FindingsList, HowCalc, KV, LevelBadge, StepsTable } from './ui';
 
 type Props = { result: DesignResult };
+type Upd = (fn: (d: DesignInput) => void) => void;
 
 // ------------------------------------------------------------------ Summary
 export function SummaryDashboard({ result, units }: Props & { units: DisplayUnits }) {
   const s = result.summary;
-  const tile = (label: string, value: string, sub?: string) => (
+  const t = result.trace;
+  const tile = (label: string, value: string, sub?: string, trace?: string) => (
     <div className="tile">
       <div className="tile-label">{label}</div>
       <div className="tile-value">{value}</div>
       {sub && <div className="tile-sub">{sub}</div>}
+      {trace && <HowCalc steps={t[trace]} title="How?" />}
     </div>
   );
   const pipes = s.pipeSizes.filter((p) => p.dn != null);
+  const na = 'INSUFFICIENT DATA';
   return (
     <div className="summary">
       <div className="summary-title">
@@ -26,20 +32,21 @@ export function SummaryDashboard({ result, units }: Props & { units: DisplayUnit
         <Counts counts={result.counts} />
       </div>
       <div className="tiles">
-        {tile('Production', fmtFlow(s.permeateM3h, units), 'design permeate flow')}
-        {tile('Daily production', fmt(s.dailyProductionM3d, 1, 'm³/day'))}
-        {tile('Recovery', fmt(s.recoveryPct, 1, '%'))}
-        {tile('Feed flow', fmtFlow(s.feedM3h, units))}
-        {tile('Reject', fmtFlow(s.rejectM3h, units))}
-        {tile('Membranes', `${s.membranes} pcs`, s.membrane)}
-        {tile('Pressure vessels', `${s.vessels} pcs`, s.array)}
-        {tile('Average flux', fmt(s.fluxLmh, 1, 'LMH'))}
-        {tile('HP pump', `${fmtFlow(s.hpFlowM3h, units)} @ ${fmtPressure(s.hpPressureBar, units)}`, `head ${fmt(s.hpHeadM, 1, 'm')}`)}
-        {tile('HP pump motor', fmtPower(s.hpMotorKw, units, 1))}
-        {tile('Raw water pump', `${fmtFlow(s.rawFlowM3h, units)} @ ${fmt(s.rawHeadM, 1, 'm')}`, `motor ${fmtPower(s.rawMotorKw, units, 1)}`)}
-        {tile('Estimated total electrical load', fmtPower(s.connectedKw, units, 1), `running ≈ ${fmtPower(s.runningKw, units, 1)}, ${fmt(s.specificEnergyKwhM3, 2, 'kWh/m³')}`)}
-        {tile('Membrane feed pressure', fmtPressure(s.feedPressureBar, units), 'estimated')}
-        {tile('Permeate TDS', fmt(s.permeateTdsMgL, 0, 'mg/L'), 'estimated')}
+        {tile('Production', fmtFlow(s.permeateM3h, units), 'design permeate flow', 'production')}
+        {tile('Daily production', fmt(s.dailyProductionM3d, 1, 'm³/day'), undefined, 'daily')}
+        {tile('Recovery', fmt(s.recoveryPct, 1, '%'), undefined, 'recovery')}
+        {tile('Feed flow', fmtFlow(s.feedM3h, units), undefined, 'feed')}
+        {tile('Reject', fmtFlow(s.rejectM3h, units), undefined, 'reject')}
+        {tile('Membranes', `${s.membranes} pcs`, s.membrane, 'membranes')}
+        {tile('Pressure vessels', `${s.vessels} pcs`, s.array, 'membranes')}
+        {tile('Average flux', fmt(s.fluxLmh, 1, 'LMH'), undefined, 'flux')}
+        {tile('Membrane feed pressure', s.feedPressureBar == null ? na : fmtPressure(s.feedPressureBar, units), 'solved element-by-element', 'feedPressure')}
+        {tile('Permeate TDS', s.permeateTdsMgL == null ? na : fmt(s.permeateTdsMgL, 0, 'mg/L'), 'estimate', 'permeateTds')}
+        {tile('HP pump', s.hpPressureBar == null ? na : `${fmtFlow(s.hpFlowM3h, units)} @ ${fmtPressure(s.hpPressureBar, units)}`, `TDH ${fmt(s.hpHeadM, 1, 'm')}`, 'hpPump')}
+        {tile('HP pump motor', s.hpPressureBar == null ? na : `${fmtPower(s.hpMotorKw, units, 1)} standard`, `calculated requirement ${fmtPower(s.hpRequiredMotorKw, units, 2)}`, 'hpPump')}
+        {tile('Raw water pump', `${fmtFlow(s.rawFlowM3h, units)} @ ${fmt(s.rawHeadM, 1, 'm')}`, `motor ${fmtPower(s.rawMotorKw, units, 1)} (req. ${fmtPower(s.rawRequiredMotorKw, units, 2)})`, 'rawPump')}
+        {tile('Estimated total electrical load', fmtPower(s.connectedKw, units, 1), `running ≈ ${fmtPower(s.runningKw, units, 1)}, ${fmt(s.specificEnergyKwhM3, 2, 'kWh/m³')}`, 'electrical')}
+        {tile('Feed osmotic pressure', s.osmoticFeedBar == null ? LAB_REQUIRED : fmtPressure(s.osmoticFeedBar, units, 2), result.chemistry.osmoticMethod, 'osmotic')}
       </div>
       <div className="pipe-strip">
         <strong>Recommended pipe sizes:</strong> {pipes.length ? pipes.map((p) => `DN ${p.dn}`).join(' / ') : '–'}
@@ -50,12 +57,85 @@ export function SummaryDashboard({ result, units }: Props & { units: DisplayUnit
             </span>
           ))}
         </div>
+        <HowCalc steps={t.pipes} />
       </div>
     </div>
   );
 }
 
 // ------------------------------------------------------------------ Membranes
+function StageCard({ s, units }: { s: StageResult; units: DisplayUnits }) {
+  return (
+    <div className="stage-card">
+      <h4>
+        Stage {s.stage}: {s.vessels} vessels × {s.elementsPerVessel} membranes = {s.elements} membranes
+      </h4>
+      <KV
+        items={[
+          ['Feed → permeate + concentrate', `${fmtFlow(s.feedM3h, units)} → ${fmtFlow(s.permeateM3h, units)} + ${fmtFlow(s.concentrateM3h, units)}`],
+          ['Stage recovery', fmt(s.recoveryPct, 1, '%')],
+          ['Feed / concentrate per vessel', `${fmt(s.feedPerVesselM3h, 2)} / ${fmt(s.concentratePerVesselM3h, 2)} m³/h`],
+          ['Pressure in → out (ΔP)', s.feedPressureBar == null ? 'INSUFFICIENT DATA' : `${fmt(s.feedPressureBar, 2)} → ${fmt(s.concentratePressureBar, 2)} bar (${fmt(s.dpBar, 2)})`],
+          ['TDS feed / concentrate / permeate', s.feedTds == null ? 'INSUFFICIENT DATA' : `${fmt(s.feedTds, 0)} / ${fmt(s.concentrateTds, 0)} / ${fmt(s.permeateTds, 1)} mg/L`],
+          ['Average flux', fmt(s.avgFluxLmh, 1, 'LMH')],
+        ]}
+      />
+      {s.elementsDetail.length > 0 && (
+        <div className="table-scroll">
+          <table className="table el-table">
+            <thead>
+              <tr>
+                <th>El.</th>
+                <th className="num">Feed m³/h</th>
+                <th className="num">Perm. m³/h</th>
+                <th className="num">Conc. m³/h</th>
+                <th className="num">Rec. %</th>
+                <th className="num">Flux LMH</th>
+                <th className="num">P feed bar</th>
+                <th className="num">P avg bar</th>
+                <th className="num">ΔP bar</th>
+                <th className="num">π feed bar</th>
+                <th className="num">π wall bar</th>
+                <th className="num">π perm bar</th>
+                <th className="num">NDP bar</th>
+                <th className="num">β (CP)</th>
+                <th className="num">Perm. TDS</th>
+                <th className="num">Rej. %</th>
+                <th className="num">TCF</th>
+                <th className="num">PCF</th>
+              </tr>
+            </thead>
+            <tbody>
+              {s.elementsDetail.map((e) => (
+                <tr key={e.position}>
+                  <td>{e.position}</td>
+                  <td className="num">{e.feedM3h}</td>
+                  <td className="num">{e.permeateM3h}</td>
+                  <td className="num">{e.concentrateM3h}</td>
+                  <td className="num">{e.recoveryPct}</td>
+                  <td className="num">{e.fluxLmh}</td>
+                  <td className="num">{e.feedPressureBar}</td>
+                  <td className="num">{e.avgPressureBar}</td>
+                  <td className="num">{e.dpBar}</td>
+                  <td className="num">{e.osmoticFeedBar}</td>
+                  <td className="num">{e.osmoticMembraneBar}</td>
+                  <td className="num">{e.osmoticPermeateBar}</td>
+                  <td className="num strong">{e.ndpBar}</td>
+                  <td className="num">{e.beta}</td>
+                  <td className="num">{e.permeateTds}</td>
+                  <td className="num">{e.rejectionPct}</td>
+                  <td className="num">{e.tcf}</td>
+                  <td className="num">{e.pressureCorrection}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MembraneResults({ result, units }: Props & { units: DisplayUnits }) {
   const m = result.membrane;
   if (!m.available)
@@ -66,61 +146,41 @@ export function MembraneResults({ result, units }: Props & { units: DisplayUnits
     );
   return (
     <>
-      <Card title={`Membrane array – ${m.membraneLabel}`}>
+      <Card title={<>Membrane array – {m.membraneLabel}{m.isDemoData && <span className="demo-badge">DEMO DATA</span>}</>}>
+        {!m.simulated && <div className="alert">{m.simulationMessage}</div>}
         <KV
           items={[
-            ['Elements required (calc.)', `${m.elementsRequired}`],
-            ['Installed elements', `${m.elements}`],
-            ['Pressure vessels', `${m.vessels} × ${m.elementsPerVessel} elements`],
             ['Array', m.arrayLabel],
-            ['Average flux', `${fmt(m.actualFluxLmh, 1)} LMH (target ${m.designFluxTargetLmh}, max ${m.maxFluxLmh})`],
-            ['Capacity at target flux', fmtFlow(m.capacityAtTargetFluxM3h, units)],
-            ['Nominal capacity (test conditions)', fmtFlow(m.nominalCapacityM3h, units)],
-            ['Avg. element recovery', fmt(m.averageElementRecoveryPct, 1, '%')],
-            ['Required feed pressure', fmtPressure(m.feedPressureBar, units)],
-            ['Concentrate pressure', fmtPressure(m.concentratePressureBar, units)],
-            ['Net driving pressure', fmtPressure(m.ndpBar, units)],
-            ['Avg. osmotic pressure', fmtPressure(m.avgOsmoticBar, units)],
-            ['Approx. salt passage', fmt(m.saltPassagePct, 2, '%')],
-            ['Permeate TDS (approx.)', fmt(m.permeateTdsMgL, 0, 'mg/L')],
+            ['Elements required for target flux', `${m.elementsRequired}`],
+            ['Installed', `${m.vessels} vessels × ${m.elementsPerVessel} = ${m.elements} elements`],
+            ['Average flux', `${fmt(m.actualFluxLmh, 1)} LMH (target ${m.designFluxTargetLmh}, max ${m.maxFluxLmh}${m.minFluxLmh ? `, min ${m.minFluxLmh}` : ''})`],
+            ['Required feed pressure', m.feedPressureBar == null ? 'INSUFFICIENT DATA' : fmtPressure(m.feedPressureBar, units, 2)],
+            ['Concentrate pressure', m.concentratePressureBar == null ? '–' : fmtPressure(m.concentratePressureBar, units, 2)],
+            ['Array pressure drop', fmt(m.arrayDpBar, 2, 'bar')],
+            ['Average NDP', fmt(m.ndpBar, 2, 'bar')],
+            ['Osmotic pressure feed / concentrate', m.osmoticFeedBar == null ? '–' : `${fmt(m.osmoticFeedBar, 2)} / ${fmt(m.osmoticConcentrateBar, 2)} bar`],
+            ['Average wall osmotic pressure', fmt(m.avgOsmoticBar, 2, 'bar')],
+            ['TCF water / salt', m.tcf == null ? '–' : `${m.tcf} / ${m.tcfSalt}`],
+            ['Permeability A / B (25 °C)', m.permeabilityLmhBar == null ? '–' : `${m.permeabilityLmhBar} LMH/bar / ${m.saltPermeabilityLmh} LMH`],
+            ['Permeate TDS (estimate)', m.permeateTdsMgL == null ? 'INSUFFICIENT DATA' : fmt(m.permeateTdsMgL, 1, 'mg/L')],
+            ['System salt rejection', fmt(m.rejectionPct, 2, '%')],
             ['Concentrate TDS', fmt(m.concentrateTdsMgL, 0, 'mg/L')],
-            ['Feed flow requirement', fmtFlow(result.production.feedM3h, units)],
+            ['Capacity at target flux', fmtFlow(m.capacityAtTargetFluxM3h, units)],
           ]}
         />
       </Card>
-      <Card title="Stage flows (equal flux per element assumed)">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Stage</th>
-              <th className="num">Vessels</th>
-              <th className="num">Elements</th>
-              <th className="num">Feed m³/h</th>
-              <th className="num">Permeate m³/h</th>
-              <th className="num">Concentrate m³/h</th>
-              <th className="num">Feed / vessel</th>
-              <th className="num">Conc. / vessel</th>
-              <th className="num">Stage recovery %</th>
-            </tr>
-          </thead>
-          <tbody>
-            {m.stageDetail.map((s) => (
-              <tr key={s.stage}>
-                <td>{s.stage}</td>
-                <td className="num">{s.vessels}</td>
-                <td className="num">{s.elements}</td>
-                <td className="num">{s.feedM3h}</td>
-                <td className="num">{s.permeateM3h}</td>
-                <td className="num">{s.concentrateM3h}</td>
-                <td className="num">{s.feedPerVesselM3h}</td>
-                <td className="num">{s.concentratePerVesselM3h}</td>
-                <td className="num">{s.recoveryPct}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <Card title="Stage-by-stage calculation (one representative vessel per stage)">
+        {m.stageDetail.map((s) => (
+          <StageCard key={s.stage} s={s} units={units} />
+        ))}
+        <p>
+          <b>
+            Total: {m.elements} membranes in {m.vessels} pressure vessels ({m.vesselsPerStage.join(':')}).
+          </b>
+        </p>
+        <p className="muted small">π = osmotic pressure; β = concentration polarisation; NDP = net driving pressure; TCF = temperature correction; PCF = pressure correction (element NDP ÷ datasheet test NDP).</p>
       </Card>
-      <Card title="Calculation steps">
+      <Card title="How was this calculated?">
         <StepsTable steps={m.steps} />
       </Card>
       <Card title="Assumptions – read before using these results" className="card-warn">
@@ -138,74 +198,166 @@ export function MembraneResults({ result, units }: Props & { units: DisplayUnits
 }
 
 // ------------------------------------------------------------------ Pumps
-export function PumpResults({ result, units }: Props & { units: DisplayUnits }) {
+function PumpCard({ p, units, data, update }: { p: PumpResult; units: DisplayUnits; data?: DesignInput; update?: Upd }) {
+  const { library } = useApp();
+  const id = p.id as PumpDutyId;
+  const ov = data?.hydraulics.pumps[id] ?? {};
+  const setOv = (k: string, v: number | null | undefined) =>
+    update?.((d) => {
+      const cur = { ...(d.hydraulics.pumps[id] ?? {}) } as Record<string, unknown>;
+      if (v === undefined || v === null || (typeof v === 'number' && !isFinite(v))) delete cur[k];
+      else cur[k] = v;
+      d.hydraulics.pumps[id] = cur;
+    });
+  const cats = ['static', 'friction', 'minor', 'equipment', 'terminal', 'suction'] as const;
+  const op = p.operatingPoint;
+  return (
+    <Card
+      title={p.name}
+      actions={p.enabled ? <span className="pill">{fmtFlow(p.designFlowM3h, units)} · TDH {fmt(p.designHeadM, 1, 'm')} · {fmtPressure(p.designPressureBar, units, 2)} · motor {fmtPower(p.standardMotorKw, units, 1)}</span> : <span className="pill muted">not included / not calculable</span>}
+    >
+      {!p.enabled ? (
+        <p className="muted">This pump is not included or cannot be calculated (see warnings).</p>
+      ) : (
+        <div className="grid-2">
+          <div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Head component</th>
+                  <th className="num">m</th>
+                  <th className="num">bar</th>
+                  <th>Basis</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cats.map((c) => {
+                  const rows = p.components.filter((x) => x.category === c);
+                  if (!rows.length) return null;
+                  return (
+                    <Fragment key={c}>
+                      <tr className="cat-row">
+                        <td colSpan={4}>{HEAD_CATEGORY_LABEL[c]}</td>
+                      </tr>
+                      {rows.map((x, i) => (
+                        <tr key={i}>
+                          <td>{x.label}</td>
+                          <td className="num">{fmt(x.headM, 2)}</td>
+                          <td className="num">{fmt(x.headM / 10.194, 3)}</td>
+                          <td className="muted small">{x.note}</td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  );
+                })}
+                <tr className="total">
+                  <td>Total Dynamic Head (calculated)</td>
+                  <td className="num">{fmt(p.calculatedHeadM, 2)}</td>
+                  <td className="num">{fmt(p.calculatedHeadM / 10.194, 3)}</td>
+                  <td />
+                </tr>
+              </tbody>
+            </table>
+            <table className="table" style={{ marginTop: 10 }}>
+              <tbody>
+                <tr><td>Flow</td><td className="num">{fmtFlow(p.designFlowM3h, units)}</td></tr>
+                <tr><td>Static head</td><td className="num">{fmt(p.staticHeadM, 2, 'm')}</td></tr>
+                <tr><td>Pipe friction loss</td><td className="num">{fmt(p.frictionHeadM, 2, 'm')}</td></tr>
+                <tr><td>Minor losses</td><td className="num">{fmt(p.minorHeadM, 2, 'm')}</td></tr>
+                <tr><td>Equipment pressure loss</td><td className="num">{fmt(p.equipmentHeadM, 2, 'm')}</td></tr>
+                <tr><td>Required operating pressure</td><td className="num">{fmt(p.terminalHeadM, 2, 'm')}</td></tr>
+                {p.suctionCreditM !== 0 && <tr><td>Less suction pressure</td><td className="num">− {fmt(p.suctionCreditM, 2, 'm')}</td></tr>}
+                <tr className="total"><td>Total Dynamic Head (design, incl. margin)</td><td className="num">{fmt(p.designHeadM, 1, 'm')} = {fmtPressure(p.designPressureBar, units, 2)}</td></tr>
+                {p.dischargePressureBar != null && <tr><td>Suction / discharge pressure</td><td className="num">{fmtPressure(p.suctionPressureBar, units, 2)} / {fmtPressure(p.dischargePressureBar, units, 2)}</td></tr>}
+                <tr><td>Hydraulic power ρ·g·Q·H</td><td className="num">{fmtPower(p.hydraulicKw, units, 2)}</td></tr>
+                <tr><td>Pump efficiency ({p.efficiencySource})</td><td className="num">{p.efficiencyPct} %</td></tr>
+                <tr><td>Shaft power = P_h ÷ η</td><td className="num">{fmtPower(p.shaftKw, units, 2)}</td></tr>
+                <tr><td>Safety factor</td><td className="num">× {p.safetyFactor}</td></tr>
+                <tr className="grand"><td>CALCULATED required motor power</td><td className="num">{fmtPower(p.requiredMotorKw, units, 2)}</td></tr>
+                <tr className="grand"><td>RECOMMENDED standard motor size</td><td className="num">{fmtPower(p.standardMotorKw, units, 1)}</td></tr>
+                <tr><td>Electrical input at duty</td><td className="num">{fmtPower(p.absorbedKw, units, 2)}</td></tr>
+                <tr><td>NPSH available</td><td className="num">{p.npshAvailableM == null ? p.npshNote : fmt(p.npshAvailableM, 2, 'm')}</td></tr>
+              </tbody>
+            </table>
+            <HowCalc steps={p.steps} />
+          </div>
+          <div>
+            {data && update && (
+              <div className="inline-form">
+                <label>
+                  Selected pump (curve)
+                  <select value={ov.libraryPumpId ?? ''} onChange={(e) => setOv('libraryPumpId', e.target.value ? Number(e.target.value) : undefined)}>
+                    <option value="">– none (operating point not confirmed) –</option>
+                    {library?.pumps
+                      .filter((x) => x.pumpType === p.pumpType)
+                      .map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.manufacturer} {x.model} {x.isDemo ? '(DEMO)' : ''} {x.curve.length < 2 ? '– no curve' : ''}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label>
+                  Efficiency %
+                  <input type="number" step="any" placeholder={String(p.efficiencyPct)} value={ov.efficiencyPct ?? ''} onChange={(e) => setOv('efficiencyPct', e.target.value === '' ? undefined : Number(e.target.value))} />
+                </label>
+                <label>
+                  Flow override m³/h
+                  <input type="number" step="any" placeholder={String(p.designFlowM3h)} value={ov.flowM3h ?? ''} onChange={(e) => setOv('flowM3h', e.target.value === '' ? undefined : Number(e.target.value))} />
+                </label>
+                <label>
+                  Extra valve/equipment loss bar
+                  <input type="number" step="any" placeholder="0" value={ov.extraLossBar ?? ''} onChange={(e) => setOv('extraLossBar', e.target.value === '' ? undefined : Number(e.target.value))} />
+                </label>
+              </div>
+            )}
+            {p.selectedPump && op ? (
+              <>
+                <p className="small">
+                  <b>
+                    {p.selectedPump.manufacturer} {p.selectedPump.model}
+                  </b>
+                  {p.selectedPump.isDemo && <span className="demo-badge">DEMO CURVE</span>}
+                </p>
+                <PumpCurveChart curve={op.pumpCurve} op={op} dutyFlow={p.designFlowM3h} dutyHead={p.designHeadM} />
+                <KV
+                  items={[
+                    ['Head at design flow', op.headAtDesignFlowM == null ? 'outside curve' : fmt(op.headAtDesignFlowM, 1, 'm')],
+                    ['Excess head at design flow', fmt(op.excessHeadPct, 1, '%')],
+                    ['Efficiency at duty (curve)', fmt(op.efficiencyAtDesignPct, 1, '%')],
+                    ['NPSHr at duty', fmt(op.npshrAtDesignM, 2, 'm')],
+                    ['Duty / BEP flow', op.bepRatio == null ? '–' : `${Math.round(op.bepRatio * 100)} % (BEP ${op.bepFlowM3h} m³/h)`],
+                    ['Natural operating point (no throttling)', op.intersectFlowM3h == null ? '–' : `${op.intersectFlowM3h} m³/h @ ${op.intersectHeadM} m`],
+                    ['Power at duty (curve)', fmt(op.powerAtDesignKw, 2, 'kW')],
+                    ['Pump motor (library)', fmt(p.selectedPump.motorKw, 1, 'kW')],
+                  ]}
+                />
+              </>
+            ) : (
+              <p className="note warn">🟡 Pump operating point requires confirmation – select a pump with its manufacturer curve (Pump Library).</p>
+            )}
+            {p.candidates.length > 0 && (
+              <p className="small muted">
+                Curves in the library that cover this duty: {p.candidates.map((c) => `${c.label} (${c.headAtFlowM} m at duty${c.bepRatio ? `, ${Math.round(c.bepRatio * 100)} % BEP` : ''})`).join('; ')}
+              </p>
+            )}
+            {p.notes.map((n, i) => (
+              <p key={i} className="note muted">
+                {n}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+export function PumpResults({ result, units, data, update }: Props & { units: DisplayUnits; data?: DesignInput; update?: Upd }) {
   return (
     <>
       {result.pumps.map((p) => (
-        <Card
-          key={p.id}
-          title={p.name}
-          actions={p.enabled ? <span className="pill">{fmtFlow(p.designFlowM3h, units)} · {fmtPressure(p.designPressureBar, units)} · {fmt(p.designHeadM, 1, 'm')} · {fmtPower(p.motorKw, units, 1)}</span> : <span className="pill muted">not included</span>}
-        >
-          {p.enabled ? (
-            <div className="grid-2">
-              <div>
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Head component</th>
-                      <th className="num">Head (m)</th>
-                      <th className="num">bar</th>
-                      <th>Note</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {p.components.map((c, i) => (
-                      <tr key={i}>
-                        <td>{c.label}</td>
-                        <td className="num">{fmt(c.headM, 2)}</td>
-                        <td className="num">{fmt(c.headM / 10.194, 2)}</td>
-                        <td className="muted">{c.note}</td>
-                      </tr>
-                    ))}
-                    <tr className="total">
-                      <td>Total calculated head</td>
-                      <td className="num">{fmt(p.calculatedHeadM, 1)}</td>
-                      <td className="num">{fmt(p.calculatedHeadM / 10.194, 2)}</td>
-                      <td />
-                    </tr>
-                  </tbody>
-                </table>
-                <KV
-                  items={[
-                    ['Flow', `${fmtFlow(p.designFlowM3h, units)} (process ${fmtFlow(p.processFlowM3h, units)})`],
-                    ['Pressure (differential)', fmtPressure(p.designPressureBar, units)],
-                    ['Head', fmt(p.designHeadM, 1, 'm')],
-                    ...(p.suctionPressureBar != null ? ([['Suction / discharge pressure', `${fmtPressure(p.suctionPressureBar, units)} / ${fmtPressure(p.dischargePressureBar, units)}`]] as [string, string][]) : []),
-                    ['Pump efficiency (assumed)', `${p.efficiencyPct} %`],
-                    ['Motor efficiency (assumed)', `${p.motorEfficiencyPct} %`],
-                    ['Shaft power', fmtPower(p.shaftKw, units)],
-                    ['Electrical input', fmtPower(p.absorbedKw, units)],
-                    ['Motor', fmtPower(p.motorKw, units, 1)],
-                  ]}
-                />
-              </div>
-              <div>
-                <StepsTable steps={p.steps} />
-                <p className="note">
-                  <b>Pump library:</b> {p.libraryNote}
-                </p>
-                {p.notes.map((n, i) => (
-                  <p key={i} className="note muted">
-                    {n}
-                  </p>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <p className="muted">{p.libraryNote}</p>
-          )}
-        </Card>
+        <PumpCard key={p.id} p={p} units={units} data={data} update={update} />
       ))}
       <Card title="Pump checks">
         {result.hpSuctionAvailableBar != null && <p>HP pump suction pressure: {fmtPressure(result.hpSuctionAvailableBar, units)}</p>}
@@ -216,15 +368,37 @@ export function PumpResults({ result, units }: Props & { units: DisplayUnits }) 
 }
 
 // ------------------------------------------------------------------ Pipes
-export function PipeResults({ result, units, onOverride, data }: Props & { units: DisplayUnits; data?: DesignInput; onOverride?: (id: string, field: string, value: string | number | undefined) => void }) {
+export function PipeResults({ result, units, update, data }: Props & { units: DisplayUnits; data?: DesignInput; update?: Upd }) {
   const { library } = useApp();
   const [open, setOpen] = useState<string | null>(null);
+  const setOv = (pid: string, field: string, value: unknown) =>
+    update?.((d) => {
+      const cur = { ...((d.hydraulics.pipes as Record<string, object | undefined>)[pid] ?? {}) } as Record<string, unknown>;
+      if (value === undefined || value === '') delete cur[field];
+      else cur[field] = value;
+      (d.hydraulics.pipes as Record<string, unknown>)[pid] = cur;
+    });
+  const method = result.pipes[0]?.method ?? 'darcy';
   return (
     <>
-      <Card title="Pipe sizing schedule">
+      <Card
+        title="Pipe hydraulic calculation"
+        actions={
+          data &&
+          update && (
+            <label className="picker">
+              Friction method
+              <select value={data.hydraulics.frictionMethod} onChange={(e) => update((d) => void (d.hydraulics.frictionMethod = e.target.value as 'darcy'))}>
+                <option value="darcy">Darcy–Weisbach (Swamee–Jain)</option>
+                <option value="hazen">Hazen–Williams</option>
+              </select>
+            </label>
+          )
+        }
+      >
         <p className="muted small">
-          Required ID d = √(4·Q ÷ (π·v<sub>max</sub>)); the smallest catalogue pipe with ID ≥ d is selected. Losses: Darcy–Weisbach with Swamee–Jain friction factor, water viscosity at feed temperature, plus fittings allowance.
-          {onOverride && ' Click a row to edit material, velocity, length, elevation or design pressure.'}
+          d = √(4·Q ÷ (π·v<sub>max</sub>)) → smallest catalogue ID ≥ d (or forced DN). Friction: {method === 'hazen' ? 'Hazen–Williams (Darcy–Weisbach shown as cross-check)' : 'Darcy–Weisbach, Swamee–Jain friction factor, viscosity at feed temperature (Hazen–Williams shown as cross-check)'}. Minor losses h = ΣK·v²/2g.
+          {update && ' Click a row to edit material, max velocity, DN, length, elevation, design pressure and fittings.'}
         </p>
         <div className="table-scroll">
           <table className="table">
@@ -233,30 +407,45 @@ export function PipeResults({ result, units, onOverride, data }: Props & { units
                 <th>Section</th>
                 <th className="num">Flow</th>
                 <th>Material</th>
-                <th className="num">Req. ID mm</th>
                 <th className="num">DN</th>
                 <th className="num">ID mm</th>
-                <th className="num">Velocity m/s</th>
+                <th className="num">v m/s</th>
                 <th className="num">v max</th>
-                <th className="num">Length m</th>
-                <th className="num">Loss bar</th>
-                <th className="num">Design / rating bar</th>
+                <th className="num">Re</th>
+                <th className="num">f</th>
+                <th className="num">L m</th>
+                <th className="num">h_f m</th>
+                <th className="num">per 100 m</th>
+                <th className="num">{method === 'hazen' ? 'D-W m' : 'H-W m'}</th>
+                <th className="num">ΣK</th>
+                <th className="num">h_m m</th>
+                <th className="num">Total bar</th>
+                <th className="num">P / rating</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
               {result.pipes.map((p) => (
                 <Fragment key={p.id}>
-                  <tr className={onOverride ? 'clickable' : ''} onClick={() => onOverride && setOpen(open === p.id ? null : p.id)}>
+                  <tr className={update ? 'clickable' : ''} onClick={() => update && setOpen(open === p.id ? null : p.id)}>
                     <td>{p.label}</td>
                     <td className="num">{fmtFlow(p.flowM3h, units)}</td>
-                    <td>{p.material}</td>
-                    <td className="num">{p.requiredIdMm}</td>
-                    <td className="num strong">{p.dn ?? '–'}</td>
+                    <td className="small">{p.material}</td>
+                    <td className="num strong">
+                      {p.dn ?? '–'}
+                      {p.dnForced ? '*' : ''}
+                    </td>
                     <td className="num">{p.innerDiameterMm ?? '–'}</td>
                     <td className="num">{p.velocity}</td>
                     <td className="num">{p.maxVelocity}</td>
+                    <td className="num">{p.reynolds.toLocaleString()}</td>
+                    <td className="num">{p.frictionFactor}</td>
                     <td className="num">{p.lengthM}</td>
+                    <td className="num">{fmt(p.frictionLossM, 3)}</td>
+                    <td className="num">{fmt(p.lossPer100m, 3)}</td>
+                    <td className="num muted">{fmt(method === 'hazen' ? p.darcyLossM : p.hazenLossM, 3)}</td>
+                    <td className="num">{p.sumK}</td>
+                    <td className="num">{fmt(p.minorLossM, 3)}</td>
                     <td className="num">{fmt(p.totalLossBar, 3)}</td>
                     <td className="num">
                       {p.designPressureBar} / {p.pressureRatingBar ?? '–'}
@@ -265,46 +454,74 @@ export function PipeResults({ result, units, onOverride, data }: Props & { units
                       <LevelBadge level={p.status} />
                     </td>
                   </tr>
-                  {onOverride && data && open === p.id && (
+                  {open === p.id && (
                     <tr className="edit-row">
-                      <td colSpan={12}>
-                        <div className="inline-form">
-                          <label>
-                            Material
-                            <select value={data.hydraulics.pipes[p.id]?.material ?? ''} onChange={(e) => onOverride(p.id, 'material', e.target.value || undefined)}>
-                              <option value="">default ({p.material})</option>
-                              {library?.pipeMaterials.map((m) => (
-                                <option key={m.name} value={m.name}>
-                                  {m.name}
-                                </option>
+                      <td colSpan={18}>
+                        {data && update && (
+                          <>
+                            <div className="inline-form">
+                              <label>
+                                Material
+                                <select value={data.hydraulics.pipes[p.id]?.material ?? ''} onChange={(e) => setOv(p.id, 'material', e.target.value || undefined)}>
+                                  <option value="">default ({p.material})</option>
+                                  {library?.pipeMaterials.map((m) => (
+                                    <option key={m.name} value={m.name}>
+                                      {m.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label>
+                                Forced DN
+                                <select value={data.hydraulics.pipes[p.id]?.dn ?? ''} onChange={(e) => setOv(p.id, 'dn', e.target.value ? Number(e.target.value) : undefined)}>
+                                  <option value="">calculated</option>
+                                  {library?.pipeSizes
+                                    .filter((s) => s.material === p.material)
+                                    .map((s) => (
+                                      <option key={s.id} value={s.dn}>
+                                        DN {s.dn} (ID {s.innerDiameterMm})
+                                      </option>
+                                    ))}
+                                </select>
+                              </label>
+                              {(
+                                [
+                                  ['maxVelocity', 'Max velocity m/s', p.maxVelocity],
+                                  ['lengthM', 'Length m', p.lengthM],
+                                  ['elevationM', 'Elevation m', p.elevationM],
+                                  ['designPressureBar', 'Design pressure bar', p.designPressureBar],
+                                ] as const
+                              ).map(([k, l, ph]) => (
+                                <label key={k}>
+                                  {l}
+                                  <input type="number" step="any" placeholder={String(ph)} value={(data.hydraulics.pipes[p.id] as Record<string, number> | undefined)?.[k] ?? ''} onChange={(e) => setOv(p.id, k, e.target.value === '' ? undefined : Number(e.target.value))} />
+                                </label>
                               ))}
-                            </select>
-                          </label>
-                          {(
-                            [
-                              ['maxVelocity', 'Max velocity m/s'],
-                              ['lengthM', 'Length m'],
-                              ['elevationM', 'Elevation m'],
-                              ['designPressureBar', 'Design pressure bar'],
-                            ] as const
-                          ).map(([k, l]) => (
-                            <label key={k}>
-                              {l}
-                              <input
-                                type="number"
-                                step="any"
-                                placeholder={String(k === 'maxVelocity' ? p.maxVelocity : k === 'lengthM' ? p.lengthM : k === 'elevationM' ? p.elevationM : p.designPressureBar)}
-                                value={data.hydraulics.pipes[p.id]?.[k] ?? ''}
-                                onChange={(e) => onOverride(p.id, k, e.target.value === '' ? undefined : Number(e.target.value))}
-                              />
-                            </label>
-                          ))}
-                          <span className="muted small">Empty = calculated default</span>
-                        </div>
-                        <details>
-                          <summary>Calculation steps</summary>
-                          <StepsTable steps={p.steps} />
-                        </details>
+                            </div>
+                            <div className="inline-form">
+                              <span className="cat-label">Fittings & valves (count):</span>
+                              {(Object.keys(FITTING_LABELS) as FittingType[]).map((ft) => {
+                                const cur = data.hydraulics.pipes[p.id]?.fittings ?? Object.fromEntries(p.fittings.map((x) => [x.type, x.count]));
+                                return (
+                                  <label key={ft} style={{ minWidth: 90 }}>
+                                    {FITTING_LABELS[ft]}
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step={1}
+                                      value={(cur as Record<string, number>)[ft] ?? 0}
+                                      onChange={(e) => setOv(p.id, 'fittings', { ...cur, [ft]: Math.max(0, Number(e.target.value) || 0) })}
+                                    />
+                                  </label>
+                                );
+                              })}
+                              <button className="btn btn-xs btn-ghost" onClick={() => setOv(p.id, 'fittings', undefined)}>
+                                default fittings
+                              </button>
+                            </div>
+                          </>
+                        )}
+                        <StepsTable steps={p.steps} />
                       </td>
                     </tr>
                   )}
@@ -313,9 +530,112 @@ export function PipeResults({ result, units, onOverride, data }: Props & { units
             </tbody>
           </table>
         </div>
+        <p className="muted small">* DN forced by user. Pressure loss per 100 m refers to straight-pipe friction.</p>
       </Card>
       <Card title="Pipe checks">
         <FindingsList findings={result.findings} sections={['Pipes']} />
+      </Card>
+    </>
+  );
+}
+
+// ------------------------------------------------------------------ Water chemistry
+export function ChemistryResults({ result }: Props) {
+  const c = result.chemistry;
+  const w = result.water;
+  return (
+    <>
+      <Card title="Ions and ionic balance">
+        {!c.majorIonsComplete && (
+          <p className="lab-required">
+            {LAB_REQUIRED}: {c.missingMajorIons.join(', ')}
+          </p>
+        )}
+        <div className="table-scroll">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Ion</th>
+                <th>Type</th>
+                <th className="num">mg/L</th>
+                <th className="num">mmol/L</th>
+                <th className="num">meq/L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {c.ions.map((i) => (
+                <tr key={i.ion}>
+                  <td>
+                    {i.ion}
+                    {i.major && <span className="imp imp-required" style={{ marginLeft: 6 }}>major</span>}
+                  </td>
+                  <td className="small">{i.kind}</td>
+                  <td className="num">{i.mgL == null ? <span className={i.major ? 'lab-required' : 'muted'}>{i.major ? 'LAB DATA REQUIRED' : '–'}</span> : fmt(i.mgL, 2)}</td>
+                  <td className="num">{fmt(i.mmolL, 3)}</td>
+                  <td className="num">{fmt(i.meqL, 3)}</td>
+                </tr>
+              ))}
+              <tr className="total">
+                <td>Σ cations / Σ anions</td>
+                <td />
+                <td />
+                <td />
+                <td className="num">{c.cationsMeqL == null ? LAB_REQUIRED : `${c.cationsMeqL} / ${c.anionsMeqL}`}</td>
+              </tr>
+              <tr className="total">
+                <td>Ionic balance error</td>
+                <td />
+                <td />
+                <td />
+                <td className="num">{c.balanceErrorPct == null ? LAB_REQUIRED : `${c.balanceErrorPct} %`}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Card>
+      <Card title="Total dissolved solids and osmotic pressure">
+        <KV
+          items={[
+            ['TDS measured', c.tdsMeasured == null ? LAB_REQUIRED : fmt(c.tdsMeasured, 0, 'mg/L')],
+            ['TDS – sum of ions', c.tdsFromIons == null ? LAB_REQUIRED : fmt(c.tdsFromIons, 0, 'mg/L')],
+            ['TDS – from conductivity', c.tdsFromConductivity == null ? '–' : fmt(c.tdsFromConductivity, 0, 'mg/L')],
+            ['TDS used for design', c.tdsUsed == null ? LAB_REQUIRED : `${fmt(c.tdsUsed, 0, 'mg/L')} (${c.tdsBasis})`],
+            ['Temperature', w.temperature == null ? LAB_REQUIRED : `${w.temperature} °C`],
+            ['Feed osmotic pressure', c.osmoticFeedBar == null ? LAB_REQUIRED : `${fmt(c.osmoticFeedBar, 3)} bar – ${c.osmoticMethod}`],
+          ]}
+        />
+        <StepsTable steps={c.steps} />
+      </Card>
+      <Card title="Scaling indicators (feed and concentrate at design recovery)">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Indicator</th>
+              <th className="num">Feed</th>
+              <th className="num">Concentrate</th>
+              <th>Status</th>
+              <th>Interpretation</th>
+            </tr>
+          </thead>
+          <tbody>
+            {c.indicators.map((i) => (
+              <tr key={i.name}>
+                <td>{i.name}</td>
+                <td className="num">{i.feed == null ? '–' : `${i.feed}${i.unit === '%' ? ' %' : ''}`}</td>
+                <td className="num">{i.concentrate == null ? '–' : `${i.concentrate}${i.unit === '%' ? ' %' : ''}`}</td>
+                <td>{i.status === 'insufficient' ? <span className="status st-ins">LAB DATA REQUIRED</span> : <LevelBadge level={i.status} />}</td>
+                <td className="small">
+                  {i.interpretation}
+                  {i.dataRequired.length > 0 && <div className="danger">Required: {i.dataRequired.join(', ')}</div>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="muted small">LSI/RSI (Langelier/Ryznar); sulfate saturation with Davies activity coefficients; silica solubility vs temperature (pH effect not modelled). Screening indicators – confirm with antiscalant supplier software.</p>
+      </Card>
+      <Card title="Water-quality warnings">
+        <FindingsList findings={result.findings} sections={['Water Chemistry', 'Water Quality', 'Raw Water']} />
       </Card>
     </>
   );
@@ -441,6 +761,7 @@ export function DosingResults({ result }: Props) {
               <th>Chemical</th>
               <th>Dosing point</th>
               <th className="num">Dose mg/L</th>
+              <th>Dose status</th>
               <th>Dose basis</th>
               <th className="num">Product kg/day</th>
               <th className="num">Solution L/h</th>
@@ -454,6 +775,7 @@ export function DosingResults({ result }: Props) {
                 <td>{d.chemical}</td>
                 <td className="small">{d.dosingPoint}</td>
                 <td className="num">{d.doseMgL}</td>
+                <td className="small">{d.doseStatus === 'indicative' ? <span className="dose-indicative">INDICATIVE – supplier confirmation required</span> : d.doseStatus === 'supplier' ? 'supplier projection' : 'calculated'}</td>
                 <td className="small">{d.doseBasis}</td>
                 <td className="num">{d.productKgDay}</td>
                 <td className="num">{d.solutionLh}</td>

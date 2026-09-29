@@ -26,8 +26,10 @@ export function logMeanCF(r: number) {
 export interface WaterAnalysis {
   tds: number | null;
   tdsEstimated: boolean;
-  temperature: number;
-  temperatureAssumed: boolean;
+  /** null = not measured – no temperature is assumed for membrane calculations */
+  temperature: number | null;
+  /** Temperature used for water viscosity in pipe friction (20 °C when not measured, flagged) */
+  viscosityTemperature: number;
   missingRequired: string[];
   missingRecommended: string[];
   ionBalance: { cationsMeq: number; anionsMeq: number; errorPct: number } | null;
@@ -75,14 +77,12 @@ export function analyseWater(w: RawWaterInput, A: AssumptionReader, f: Findings)
     if (ratio < 0.5 || ratio > 0.8) f.review(S, 'tds_ec_ratio', `TDS/conductivity ratio is ${round(ratio, 2)} (normal 0.55–0.75). Check the water analysis.`);
   }
 
-  let temperature = 25;
-  let temperatureAssumed = true;
+  let temperature: number | null = null;
   if (isNum(w.temperature)) {
     temperature = w.temperature;
-    temperatureAssumed = false;
     if (w.temperature < 1 || w.temperature > 45) f.critical(S, 'temp_range', `Feed temperature ${w.temperature} °C is outside the normal RO operating range (1–45 °C).`);
   } else {
-    f.review(S, 'temp_missing', 'Temperature missing – 25 °C assumed. Design pressure is sensitive to temperature; enter the minimum expected temperature.');
+    f.critical(S, 'temp_missing', 'Feed water temperature missing – LABORATORY DATA REQUIRED. Membrane pressure, flux correction and permeate quality cannot be calculated (no temperature is assumed). 20 °C is used only for water viscosity in pipe-friction calculations.');
   }
 
   if (isNum(w.ph) && (w.ph < 2 || w.ph > 12)) f.critical(S, 'ph_range', `pH ${w.ph} is outside the plausible range 2–12.`);
@@ -100,15 +100,13 @@ export function analyseWater(w: RawWaterInput, A: AssumptionReader, f: Findings)
     const an = (w.chloride as number) / 35.45 + (w.sulfate as number) / 48.03 + (w.alkalinity as number) / 50.04 + (w.nitrate ?? 0) / 62.0 + (w.fluoride ?? 0) / 19.0;
     const err = (Math.abs(cat - an) / (cat + an)) * 100;
     ionBalance = { cationsMeq: round(cat, 2), anionsMeq: round(an, 2), errorPct: round(err, 1) };
-    if (err > A.n('ion_balance_tolerance'))
-      f.review(S, 'ion_balance', `Ion balance error ${round(err, 1)} % (cations ${round(cat, 2)} meq/L vs anions ${round(an, 2)} meq/L). The analysis may be incomplete or wrong.`);
-    else f.ok(S, 'ion_balance', `Ion balance error ${round(err, 1)} % – analysis is consistent.`);
+    // findings for the ionic balance are issued by the Water Chemistry module
   }
 
   if (missingRequired.length === 0) f.ok(S, 'data_complete', 'All water-quality parameters required for a reliable design are entered.');
   else f.critical(S, 'data_missing', `Missing water-quality data: ${missingRequired.join(', ')}. INSUFFICIENT DATA — LAB ANALYSIS REQUIRED for a reliable design.`);
 
-  return { tds, tdsEstimated, temperature, temperatureAssumed, missingRequired, missingRecommended, ionBalance };
+  return { tds, tdsEstimated, temperature, viscosityTemperature: temperature ?? 20, missingRequired, missingRecommended, ionBalance };
 }
 
 // ------------------------------------------------------------------ Scaling
@@ -158,7 +156,7 @@ function sulfateSat(cationMgL: number, cationMw: number, so4MgL: number, tds: nu
  * - LSI (Langelier), Davies activities for sulfates, linear silica solubility.
  * These are screening estimates – NOT a substitute for antiscalant supplier software.
  */
-export function scaling(w: RawWaterInput, tds: number | null, tempC: number, r: number, A: AssumptionReader, phOverride?: number, alkOverride?: number): ScalingResult {
+export function scaling(w: RawWaterInput, tds: number | null, tempC: number | null, r: number, A: AssumptionReader, phOverride?: number, alkOverride?: number): ScalingResult {
   const cf = 1 / (1 - r);
   const notes: string[] = [];
   const ph = phOverride ?? w.ph;
@@ -166,12 +164,12 @@ export function scaling(w: RawWaterInput, tds: number | null, tempC: number, r: 
   let feedLsi: number | null = null;
   let concentrateLsi: number | null = null;
   let concentratePh: number | null = null;
-  if (isNum(ph) && isNum(w.calcium) && isNum(alk) && tds !== null) {
+  if (isNum(ph) && isNum(w.calcium) && isNum(alk) && tds !== null && tempC !== null) {
     const caC = w.calcium * 2.497;
     feedLsi = ph - phSaturation(tds, tempC, caC, alk);
     concentratePh = Math.min(ph + Math.log10(cf), 9.5);
     concentrateLsi = concentratePh - phSaturation(tds * cf, tempC, caC * cf, alk * cf);
-  } else notes.push('LSI not calculated: pH, calcium, alkalinity and TDS are required.');
+  } else notes.push('LSI not calculated: pH, calcium, alkalinity, TDS and temperature are required – LABORATORY DATA REQUIRED.');
 
   let caso4SatPct: number | null = null;
   if (isNum(w.calcium) && isNum(w.sulfate) && tds !== null) {
@@ -189,13 +187,13 @@ export function scaling(w: RawWaterInput, tds: number | null, tempC: number, r: 
   let silicaSolubilityMgL: number | null = null;
   let silicaSatPct: number | null = null;
   let maxRecoveryBySilicaPct: number | null = null;
-  if (isNum(w.silica)) {
+  if (isNum(w.silica) && tempC !== null) {
     silicaConcMgL = w.silica * cf;
     silicaSolubilityMgL = Math.max(A.n('silica_solubility_25c') + 2.4 * (tempC - 25), 40);
     const limit = silicaSolubilityMgL * (A.n('silica_limit_pct') / 100);
     silicaSatPct = (silicaConcMgL / silicaSolubilityMgL) * 100;
     maxRecoveryBySilicaPct = w.silica > 0 ? Math.min(99, Math.max(0, (1 - w.silica / limit) * 100)) : 99;
-  } else notes.push('Silica saturation not calculated: silica not analysed.');
+  } else notes.push('Silica saturation not calculated: silica and temperature are required.');
 
   return {
     concentrationFactor: cf,

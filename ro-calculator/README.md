@@ -41,10 +41,11 @@ npm start
 ```
 Then open **http://localhost:3000**.
 
-On first start the database file `data\ro-calculator.db` is created. The migration is applied automatically, and seed
-data is loaded:
-- 13 membrane models (8" and 4"; typical datasheet values)
-- 39 generic pump duty points
+On first start the database file `data\ro-calculator.db` is created. The migrations are applied automatically
+(an existing version-1 database is upgraded in place), and seed data is loaded:
+- 5 **DEMO** membrane records (8" and 4"). They are clearly-labelled sample values, **not manufacturer data**.
+  Enter your manufacturers' datasheet values in the Membrane Library
+- 39 **DEMO** pumps with DEMO curves (flow, head, efficiency, NPSHr). Enter the real manufacturer curves
 - a pipe catalogue: PVC-U PN16, HDPE PE100 SDR11, SS316L Sch10S/Sch40S
 - default assumptions and settings
 - the sample project **"30 m³/h RO System"**
@@ -84,8 +85,9 @@ the **Projects** page and import them again later, on the same or another PC.
 | **Dashboard** | Project count, library size, the active project's RO design summary, recent projects |
 | **Projects** | Create, open/edit, duplicate, export (JSON), import, delete, open the PDF |
 | **New RO Design** | Blank design or a copy of the 30 m³/h sample |
-| **Membrane Library** | Add, edit, copy or delete membrane models (area, flow, rejection, max pressure/temperature, pH, test conditions) |
-| **Pump Library** | Add, edit or delete pump duty points, used to pre-select pumps and check their operating range |
+| **Membrane Library** | Add, edit, copy or delete membrane models: datasheet values, test conditions, recommended operating range (flux, element recovery, vessel flows, ΔP), data source. DEMO records are badged |
+| **Water Chemistry** | Ion table, ionic balance, TDS (measured / sum of ions / conductivity), osmotic pressure, LSI/RSI and sulfate/silica saturation. Missing data is shown as LABORATORY DATA REQUIRED |
+| **Pump Library** | Pumps with manufacturer curves (flow, head, efficiency, NPSHr) entered point by point, with a live curve chart |
 | **Pipe Calculator** | Stand-alone pipe sizing, unit converter, editable pipe catalogue and materials |
 | **Pretreatment** | Pretreatment recommendation for the active project, with reasons, data used and sizing |
 | **BOM** | Editable Bill of Materials and optional cost estimate |
@@ -95,7 +97,9 @@ the **Projects** page and import them again later, on the same or another PC.
 The **design editor** (`Projects → Open`) has these tabs:
 
 - **Inputs:** Project · Production · Raw Water · Membrane · Pumps & Site · Treatment options · Tanks · Assumptions
-- **Results:** Summary · RO/Membranes · Pumps · Pipes · Pretreatment & Dosing · Tanks · Electrical · Process Flow · BOM & Cost · Warnings
+- **Results:** Summary · Water Chemistry · RO/Membranes (stage-by-stage, element by element) · Pumps (curve selection, operating point, NPSH) · Pipes (fittings, DN override, Darcy–Weisbach / Hazen–Williams) · Pretreatment & Dosing · Tanks · Electrical · Process Flow · BOM & Cost · Warnings
+
+Every key result has a **"How was this calculated?"** section showing the input, formula, assumptions and result.
 
 Results recalculate **live** as you type. Press **Save** (`Ctrl+S`) to store the project in the local database.
 Every warning is labelled **🟢 Acceptable**, **🟡 Review** or **🔴 Critical**.
@@ -110,28 +114,28 @@ equipment is included only as a precaution because data is missing, the reason s
 ## 4. Engineering method (summary)
 
 Every formula is shown in the application next to its result. Every assumption is listed and editable on the
-**Assumptions** tab (per project) and in **Settings** (global defaults for new projects).
+**Assumptions** tab (per project) and in **Settings** (global defaults for new projects). The numerical verification
+and the phase-1 → phase-2 comparison are in [VERIFICATION.md](VERIFICATION.md).
 
 | Module | Method |
 |---|---|
 | Production | Q_p = m³/day ÷ hours × peak factor (or override), Q_f = Q_p ÷ R, Q_c = Q_f − Q_p |
-| Membranes | N = ceil(Q_p·1000 ÷ (J_design·A)); vessels = ceil(N ÷ elements per vessel); stages from recovery (≤ 50 % → 1, ≤ 75 % → 2, else 3) with a 2:1 / 4:2:1 taper; checks on flux, feed and concentrate flow per vessel, and element recovery |
-| Pressure | Permeability A from the datasheet test point; TCF = exp(K(1/298 − 1/T)); NDP = J ÷ (A·TCF·fouling factor); P_feed = NDP + π_avg − π_p + ΔP/2 + P_permeate, with π_avg from the log-mean concentration factor × polarisation factor |
-| Salt passage | Nominal passage scaled by flux ratio, TCF, concentration factor and an ageing factor (screening estimate) |
-| Scaling | LSI (Langelier) of the concentrate (pH_c ≈ pH_f + log CF); CaSO4 / BaSO4 / SrSO4 saturation with Davies activity coefficients; silica solubility vs temperature; acid dose from carbonate equilibrium (pKa 6.35) |
-| Pretreatment | Rule set with explicit triggers (turbidity, SDI, Fe, Mn, free chlorine, TOC, LSI, CaSO4, silica); filter vessels sized from loading rate and standard diameters; cartridge count from flow per 40" element; softener resin from hardness × flow × cycle |
-| Pumps | Head components listed one by one (static, friction, filters, membrane pressure, suction). P_hyd = ρ·g·Q·H; shaft = P_hyd ÷ η_pump; motor = next IEC size ≥ shaft × sizing factor; checked against the pump library (70–120 % of rated flow) |
-| Pipes | d = √(4Q ÷ (π·v_max)), then the smallest catalogue ID ≥ d (the catalogue is data, not code); Darcy–Weisbach with Swamee–Jain and temperature-dependent viscosity; fittings allowance; pressure rating check |
-| Tanks | Raw = Q_raw × hours; product = max(Q_p × hours, peak deficit); reject; CIP (L per element); chemical tanks (days of autonomy); freeboard; standard sizes |
-| Electrical | Connected load, running load, kWh/day, kWh/m³, full-load current, main incomer |
+| Water chemistry | Ion table (mg/L, mmol/L, meq/L), ionic balance, TDS from the sum of ions; osmotic pressure π = φ·R·T·Σcᵢ (a NaCl coefficient is used as a flagged fallback when the ion analysis is incomplete) |
+| Membrane array | Element count from the design flux; automatic or **manual** array (vessels per stage, e.g. 2:1, 3:1, 4:2, 5:2, 6:3). An automatic array is checked with the solver and replaced by the nearest array that meets the vessel flow limits |
+| Element model | Solution–diffusion, element by element: Jw = A·TCF·FF·NDP, NDP = P_avg − P_p − (π_wall − π_p), β = exp(0.7·r), C_p = B·C_m/(Jw + B), ΔP = ΔP_ref·(Q_avg/Q_ref)^1.7. A and B are derived from the datasheet test point. The feed pressure is **solved** so that the array delivers Q_p. Per element: flows, recovery, flux, pressures, osmotic pressures, NDP, β, permeate TDS, rejection, TCF, pressure-correction factor |
+| Scaling | LSI and RSI (feed/concentrate), CaSO₄/BaSO₄/SrSO₄ saturation (Davies), silica vs temperature; acid dose from carbonate equilibrium |
+| Pretreatment | Rules with explicit triggers and water-quality risk warnings (hardness, silica, Fe, Mn, turbidity, SDI, chlorine). Antiscalant dose is INDICATIVE until the supplier's dose is entered |
+| Pumps | TDH = static + pipe friction + minor losses + equipment losses + required operating pressure − suction. P_h = ρ·g·Q·H; P_s = P_h ÷ η; **calculated** motor power = P_s × safety factor, shown separately from the **recommended standard** IEC motor |
+| Pump curves | Manufacturer curve (Q, H, η, NPSHr) → head and efficiency at duty, excess head, BEP ratio, system-curve intersection, NPSHa vs NPSHr + margin |
+| Pipes | d = √(4Q ÷ (π·v_max)) → catalogue DN (or a forced DN). Darcy–Weisbach (Swamee–Jain) or Hazen–Williams; minor losses ΣK·v²/2g with editable fittings; Re, f, loss per 100 m, pressure rating |
+| Tanks / electrical / BOM | As in phase 1 |
 
 Scope limits of this version (clearly simplified, not hidden):
-- Single RO train and single pass. No 2nd pass, no energy recovery device, no concentrate recirculation
-- Equal flux per element is assumed for the stage flows. There is no element-by-element projection
-- Scaling indices are screening estimates. Confirm antiscalant choice and dose with the supplier's software
-- Pump selection uses duty points and a simplified parabolic curve. Confirm with the published pump curves
-- Seed membrane values are typical datasheet values. Check them against current manufacturer datasheets
-- Costing supports USD. Unit costs are entered by you; no prices are built in
+- **Not a manufacturer projection.** The element model uses generic correlations (β, ΔP, TCF). Verify with the manufacturer's software
+- Single train, single pass, single design temperature. No interstage booster, energy recovery device or concentrate recirculation
+- LSI is not valid above 10 000 mg/L. The Stiff & Davis index is not implemented, and this is flagged
+- Membrane and pump seed data are **DEMO** values. No manufacturer data is included
+- Costing supports USD. Unit costs are entered by you
 
 ---
 

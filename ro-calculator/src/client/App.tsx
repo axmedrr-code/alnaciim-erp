@@ -3,7 +3,7 @@ import { AppProvider, useApp } from './context';
 import { DesignPage } from './pages/DesignPage';
 import { MembraneLibraryPage, PumpLibraryPage } from './pages/LibraryPages';
 import { DashboardPage, NewDesignPage, ProjectsPage } from './pages/ProjectPages';
-import { BomPage, PipeCalculatorPage, PretreatmentPage, ReportsPage, SettingsPage } from './pages/ToolPages';
+import { BomPage, ChemistryPage, PipeCalculatorPage, PretreatmentPage, ReportsPage, SettingsPage } from './pages/ToolPages';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: '▦', end: true },
@@ -12,6 +12,7 @@ const NAV = [
   { to: '/membranes', label: 'Membrane Library', icon: '≣' },
   { to: '/pumps', label: 'Pump Library', icon: '⚙' },
   { to: '/pipes', label: 'Pipe Calculator', icon: '⌀' },
+  { to: '/chemistry', label: 'Water Chemistry', icon: '⚗' },
   { to: '/pretreatment', label: 'Pretreatment', icon: '▥' },
   { to: '/bom', label: 'BOM', icon: '☰' },
   { to: '/reports', label: 'Reports', icon: '🖶' },
@@ -80,6 +81,7 @@ const router = createBrowserRouter([
       { path: 'membranes', element: <MembraneLibraryPage /> },
       { path: 'pumps', element: <PumpLibraryPage /> },
       { path: 'pipes', element: <PipeCalculatorPage /> },
+      { path: 'chemistry', element: <ChemistryPage /> },
       { path: 'pretreatment', element: <PretreatmentPage /> },
       { path: 'bom', element: <BomPage /> },
       { path: 'reports', element: <ReportsPage /> },

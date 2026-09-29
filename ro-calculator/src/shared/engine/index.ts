@@ -1,15 +1,17 @@
 import { AssumptionReader, mergeAssumptions } from '../assumptions';
-import type { DesignContext, DesignInput, PipeSectionId } from '../types';
+import type { DesignContext, DesignInput, PipeSectionId, PumpDutyId } from '../types';
+import { normalizeDesign } from '../sample';
 import { WATER_SOURCE_LABELS } from '../types';
 import { applyBomOverrides, BomLine, calcCost, CostResult, generateBom } from './bom';
-import { barToM, Finding, Findings, isNum, Level, mToBar, round } from './common';
+import { barToM, CalcStep, Finding, Findings, isNum, Level, mToBar, n, round, step } from './common';
 import { calcDosing, DosingLine } from './dosing';
 import { calcElectrical, ElectricalResult } from './electrical';
 import { calcMembrane, MembraneResult } from './membrane';
 import { calcPipeSections, PipeSectionResult, SectionFlows } from './pipes';
 import { calcPretreatment, PretreatmentResult, ptIn } from './pretreatment';
 import { calcProduction, ProductionResult } from './production';
-import { buildPump, HeadComponent, PumpResult } from './pumps';
+import { buildPump, HeadComponent, PumpResult, vapourHeadM } from './pumps';
+import { calcChemistry, ChemistryResult } from './chemistry';
 import { calcTanks, TankResult } from './tanks';
 import { analyseWater, WaterAnalysis } from './water';
 
@@ -38,9 +40,13 @@ export interface DesignSummary {
   hpPressureBar: number | null;
   hpHeadM: number;
   hpMotorKw: number;
+  hpRequiredMotorKw: number;
   rawFlowM3h: number;
   rawHeadM: number;
   rawMotorKw: number;
+  rawRequiredMotorKw: number;
+  osmoticFeedBar: number | null;
+  configMode: 'auto' | 'manual';
   connectedKw: number;
   runningKw: number;
   specificEnergyKwhM3: number;
@@ -51,12 +57,14 @@ export interface DesignResult {
   engineVersion: string;
   calculatedAt: string;
   water: WaterAnalysis;
+  chemistry: ChemistryResult;
   production: ProductionResult;
   membrane: MembraneResult;
   pretreatment: PretreatmentResult;
   pipes: PipeSectionResult[];
   pumps: PumpResult[];
   hpSuctionAvailableBar: number | null;
+  trace: Record<string, CalcStep[]>;
   dosing: DosingLine[];
   tanks: TankResult[];
   electrical: ElectricalResult;
@@ -69,57 +77,88 @@ export interface DesignResult {
   assumptionsUsed: Record<string, number | number[]>;
 }
 
-export const ENGINE_VERSION = '1.0.0';
-/** Level of water in the raw tank above the feed-pump suction, used when no feed pump is installed. */
-const RAW_TANK_LEVEL_M = 2;
+export const ENGINE_VERSION = '2.0.0';
 
-export function runDesign(input: DesignInput, ctx: DesignContext): DesignResult {
+export function runDesign(input0: DesignInput, ctx: DesignContext): DesignResult {
+  const input = normalizeDesign(input0);
   const assumptions = mergeAssumptions(input.assumptions);
   const A = new AssumptionReader(assumptions);
   const f = new Findings();
   const w = input.water;
+  const H = input.hydraulics;
 
   const water = analyseWater(w, A, f);
   const T = water.temperature;
+  const Tv = water.viscosityTemperature;
   const prod = calcProduction(input.production, w.source, A, f);
-  const mem = calcMembrane(input.membrane, ctx.membrane, prod, w.source, water.tds, T, w.ph, A, f);
-  const pt = calcPretreatment(input.pretreatment, w, w.source, water.tds, T, prod, A, f);
+  const chem = calcChemistry(w, T, prod.valid ? prod.recoveryPct : null, A, f);
+  const tdsUsed = chem.tdsUsed;
+  const mem = calcMembrane(input.membrane, ctx.membrane, prod, w.source, tdsUsed, T, w.ph, chem.osmoticPerMgL, A, f);
+  const pt = calcPretreatment(input.pretreatment, w, w.source, tdsUsed, T, prod, A, f);
 
   // ------------------------------------------------ Flows through pipe sections
   const flowMargin = 1 + A.n('flow_safety_margin') / 100;
+  const pumpFlow = (id: PumpDutyId, base: number) => {
+    const o = H.pumps[id]?.flowM3h;
+    return isNum(o) && o > 0 ? o : base * flowMargin;
+  };
   const rawFlow = prod.feedM3h * A.n('raw_flow_factor');
-  const distFlow = isNum(input.hydraulics.distributionFlowM3h) && input.hydraulics.distributionFlowM3h > 0
-    ? input.hydraulics.distributionFlowM3h
+  const distFlow = isNum(H.distributionFlowM3h) && H.distributionFlowM3h > 0
+    ? H.distributionFlowM3h
     : isNum(input.tanks.peakDemandM3h) && input.tanks.peakDemandM3h > 0 ? input.tanks.peakDemandM3h : prod.permeateM3h;
   const isWell = w.source === 'well';
   const dyn = isNum(w.dynamicLevel) ? w.dynamicLevel : isNum(w.staticLevel) ? w.staticLevel : null;
   const lift = isWell ? dyn ?? 0 : 0;
   const riser = isWell ? (dyn ?? 0) + A.n('well_submergence_m') : 0;
+  const elevDiff = isNum(w.elevationDifference) ? w.elevationDifference : 0;
   const sf: SectionFlows = {
     flows: {
-      borehole_to_raw_tank: rawFlow * flowMargin,
-      raw_tank_to_pretreatment: input.hydraulics.feedPumpEnabled ? prod.feedM3h * flowMargin : prod.feedM3h,
+      borehole_to_raw_tank: pumpFlow('raw', rawFlow),
+      raw_tank_to_pretreatment: H.feedPumpEnabled ? pumpFlow('feed', prod.feedM3h) : prod.feedM3h,
       pretreatment_to_cartridge: prod.feedM3h,
       cartridge_to_hp: prod.feedM3h,
-      hp_to_ro: prod.feedM3h,
+      hp_to_ro: pumpFlow('hp', prod.feedM3h),
       permeate_to_tank: prod.permeateM3h,
       reject_to_drain: prod.rejectM3h,
-      product_to_distribution: input.hydraulics.productPumpEnabled ? distFlow * flowMargin : distFlow,
+      product_to_distribution: H.productPumpEnabled ? pumpFlow('product', distFlow) : distFlow,
     },
     defaultLengths: { borehole_to_raw_tank: round(riser + (isNum(w.distanceToPlant) ? w.distanceToPlant : 100), 1) },
-    defaultElevations: { borehole_to_raw_tank: round(lift + (isNum(w.elevationDifference) ? w.elevationDifference : 0) + A.n('raw_tank_inlet_height_m'), 1) },
+    defaultElevations: {},
     defaultPressures: {
       borehole_to_raw_tank: 10, raw_tank_to_pretreatment: 6, pretreatment_to_cartridge: 6, cartridge_to_hp: 6,
       hp_to_ro: (mem.feedPressureBar ?? 15) * 1.2, permeate_to_tank: 4, reject_to_drain: 4, product_to_distribution: 6,
     },
   };
   // First pass (losses only – design pressures refined after the pumps are known)
-  const pipes1 = calcPipeSections(sf, input.hydraulics.pipes, ctx.pipeSizes, ctx.pipeMaterials, T, A, new Findings());
+  const pipes1 = calcPipeSections(sf, H.pipes, H.frictionMethod, ctx.pipeSizes, ctx.pipeMaterials, Tv, A, new Findings());
   const pipe = (id: PipeSectionId) => pipes1.find((p) => p.id === id)!;
+  const pipeComps = (ids: PipeSectionId[]): HeadComponent[] =>
+    ids.flatMap((id) => {
+      const p = pipe(id);
+      return [
+        { category: 'friction' as const, label: `${p.label}: friction`, headM: p.frictionLossM, note: `${p.lengthM} m DN ${p.dn}, ${p.method === 'hazen' ? 'Hazen–Williams' : 'Darcy–Weisbach'}` },
+        { category: 'minor' as const, label: `${p.label}: fittings & valves`, headM: p.minorLossM, note: `ΣK ${p.sumK}` },
+        ...(p.elevationM ? [{ category: 'static' as const, label: `${p.label}: elevation`, headM: p.elevationM, note: 'section input' }] : []),
+      ];
+    });
+  const extra = (id: PumpDutyId): HeadComponent[] => {
+    const x = H.pumps[id]?.extraLossBar;
+    return isNum(x) && x !== 0 ? [{ category: 'equipment', label: 'Additional equipment / valve loss', headM: barToM(x), note: `${x} bar (project input)` }] : [];
+  };
+  const libPump = (id: PumpDutyId) => {
+    const pid = H.pumps[id]?.libraryPumpId;
+    return pid ? ctx.pumps.find((p) => p.id === pid) ?? null : null;
+  };
+  const effOv = (id: PumpDutyId) => H.pumps[id]?.efficiencyPct ?? null;
+  const flowOv = (id: PumpDutyId) => H.pumps[id]?.flowM3h ?? null;
+  const vap = vapourHeadM(Tv);
+  const tankNpsha = (suctionPipe: PipeSectionId | null) => {
+    const loss = suctionPipe ? Math.min(pipe(suctionPipe).totalLossM, pipe(suctionPipe).totalLossM) : 0;
+    return A.n('atm_head_m') + A.n('tank_min_level_m') - loss - vap;
+  };
 
   // ------------------------------------------------ Pumps
   const pumps: PumpResult[] = [];
-  const ptDpBar = pt.totalDpBar;
   const cartDpBar = A.n('cartridge_dp_bar');
 
   // Raw water pump
@@ -132,80 +171,91 @@ export function runDesign(input: DesignInput, ctx: DesignContext): DesignResult 
     if (isNum(w.dynamicLevel) && isNum(w.staticLevel) && w.dynamicLevel < w.staticLevel) f.critical('Raw Water', 'levels', 'Dynamic water level is above the static level – check borehole data.');
     if (isNum(w.boreholeDepth) && dyn !== null && dyn + A.n('well_submergence_m') > w.boreholeDepth)
       f.critical('Pumps', 'well_depth', `Pump setting depth ${dyn + A.n('well_submergence_m')} m (dynamic level + submergence) exceeds the borehole depth ${w.boreholeDepth} m.`);
-    rawComp.push({ label: 'Static lift (dynamic water level)', headM: lift, note: dyn === null ? 'not entered' : `${dyn} m below ground` });
+    rawComp.push({ category: 'static', label: 'Dynamic water level (lift to ground)', headM: lift, note: dyn === null ? 'NOT ENTERED' : `${dyn} m below ground` });
   }
-  rawComp.push({ label: 'Elevation: plant above wellhead/source', headM: isNum(w.elevationDifference) ? w.elevationDifference : 0, note: isNum(w.elevationDifference) ? '' : 'not entered – 0 m' });
-  rawComp.push({ label: 'Raw tank inlet height', headM: A.n('raw_tank_inlet_height_m'), note: 'assumption' });
-  rawComp.push({ label: 'Pipe friction + fittings', headM: pipe('borehole_to_raw_tank').totalLossM, note: `${pipe('borehole_to_raw_tank').lengthM} m, DN ${pipe('borehole_to_raw_tank').dn}` });
-  rawComp.push({ label: 'Filter / strainer loss', headM: barToM(A.n('wellhead_strainer_loss_bar')), note: `${A.n('wellhead_strainer_loss_bar')} bar` });
-  if (!isWell && isNum(w.feedPressureBar) && w.feedPressureBar > 0) rawComp.push({ label: 'Available source pressure', headM: -barToM(w.feedPressureBar), note: `${w.feedPressureBar} bar` });
+  rawComp.push({ category: 'static', label: 'Elevation: plant above wellhead/source', headM: elevDiff, note: isNum(w.elevationDifference) ? 'input' : 'not entered – 0 m' });
+  rawComp.push({ category: 'static', label: 'Raw tank inlet height', headM: A.n('raw_tank_inlet_height_m'), note: 'assumption' });
+  rawComp.push(...pipeComps(['borehole_to_raw_tank']));
+  rawComp.push({ category: 'equipment', label: 'Wellhead strainer / filter', headM: barToM(A.n('wellhead_strainer_loss_bar')), note: `${A.n('wellhead_strainer_loss_bar')} bar` });
+  rawComp.push(...extra('raw'));
+  if (!isWell && isNum(w.feedPressureBar) && w.feedPressureBar > 0) rawComp.push({ category: 'suction', label: 'Available source pressure', headM: -barToM(w.feedPressureBar), note: `${w.feedPressureBar} bar` });
   const rawHeadSum = rawComp.reduce((s, c) => s + c.headM, 0);
   const rawEnabled = prod.valid && (isWell || rawHeadSum > 0);
   if (!isWell && rawHeadSum <= 0) f.ok('Pumps', 'raw_not_needed', 'Available source pressure is sufficient to fill the raw water tank – no raw water pump required.');
-  pumps.push(buildPump({ id: 'raw', name: isWell ? 'Raw water (borehole) pump' : 'Raw water / intake pump', pumpType: 'borehole', enabled: rawEnabled, processFlowM3h: rawFlow, components: rawComp, effKey: 'raw_pump_eff', suctionPressureBar: isWell ? null : 0 }, ctx.pumps, A, f));
+  pumps.push(buildPump({
+    id: 'raw', name: isWell ? 'Raw water (borehole) pump' : 'Raw water / intake pump', pumpType: 'borehole', enabled: rawEnabled, processFlowM3h: rawFlow, flowOverrideM3h: flowOv('raw'),
+    components: rawComp, effKey: 'raw_pump_eff', efficiencyOverride: effOv('raw'), suctionPressureBar: isWell ? null : 0, selectedPump: libPump('raw'),
+    npshAvailableM: null, npshNote: isWell ? 'Submersible pump – NPSH ensured by submergence below dynamic level' : 'Not evaluated',
+    notes: isWell ? [`Riser + transfer pipe length ${pipe('borehole_to_raw_tank').lengthM} m = pump setting ${round(riser, 1)} m + distance ${isNum(w.distanceToPlant) ? w.distanceToPlant : '100 (default)'} m.`] : [],
+  }, ctx.pumps, A, f));
 
   // Feed / booster pump
-  const lpPipes = (['raw_tank_to_pretreatment', 'pretreatment_to_cartridge', 'cartridge_to_hp'] as PipeSectionId[]).map(pipe);
-  const lpFriction = lpPipes.reduce((s, p) => s + p.totalLossM, 0);
-  const lpElev = lpPipes.reduce((s, p) => s + p.elevationM, 0);
-  const feedEnabled = input.hydraulics.feedPumpEnabled && prod.valid;
+  const feedEnabled = H.feedPumpEnabled && prod.valid;
+  const ptItems = pt.items.filter((i) => i.inDesign && i.category === 'Physical' && i.id !== 'cartridge' && i.dpBar > 0);
   const feedComp: HeadComponent[] = [
-    { label: 'Required HP pump suction pressure', headM: barToM(A.n('hp_min_suction_bar')), note: `${A.n('hp_min_suction_bar')} bar` },
-    { label: 'Pretreatment filters pressure loss', headM: barToM(ptDpBar), note: `${ptDpBar} bar` },
-    { label: 'Cartridge filter pressure loss', headM: barToM(cartDpBar), note: `${cartDpBar} bar (dirty)` },
-    { label: 'Pipe friction + fittings', headM: lpFriction, note: 'Raw tank → HP suction' },
-    { label: 'Static elevation', headM: lpElev, note: '' },
+    { category: 'terminal', label: 'Required HP pump suction pressure', headM: barToM(A.n('hp_min_suction_bar')), note: `${A.n('hp_min_suction_bar')} bar` },
+    ...ptItems.map((i) => ({ category: 'equipment' as const, label: i.name, headM: barToM(i.dpBar), note: `${i.dpBar} bar` })),
+    { category: 'equipment', label: 'Cartridge filter (dirty)', headM: barToM(cartDpBar), note: `${cartDpBar} bar` },
+    ...pipeComps(['raw_tank_to_pretreatment', 'pretreatment_to_cartridge', 'cartridge_to_hp']),
+    ...extra('feed'),
   ];
-  pumps.push(buildPump({ id: 'feed', name: 'Feed / booster pump', pumpType: 'feed', enabled: feedEnabled, processFlowM3h: prod.feedM3h, components: feedComp, effKey: 'feed_pump_eff', suctionPressureBar: 0 }, ctx.pumps, A, f));
+  pumps.push(buildPump({
+    id: 'feed', name: 'Feed / booster pump', pumpType: 'feed', enabled: feedEnabled, processFlowM3h: prod.feedM3h, flowOverrideM3h: flowOv('feed'), components: feedComp,
+    effKey: 'feed_pump_eff', efficiencyOverride: effOv('feed'), suctionPressureBar: 0, selectedPump: libPump('feed'),
+    npshAvailableM: tankNpsha('raw_tank_to_pretreatment'), npshNote: `NPSHa = H_atm ${A.n('atm_head_m')} + min level ${A.n('tank_min_level_m')} − suction line loss − vapour ${round(vap, 2)} m`,
+  }, ctx.pumps, A, f));
 
   // HP suction pressure available
-  let hpSuction: number | null;
+  const lpLoss = (['raw_tank_to_pretreatment', 'pretreatment_to_cartridge', 'cartridge_to_hp'] as PipeSectionId[]).reduce((s, id) => s + pipe(id).totalLossM + pipe(id).elevationM, 0);
+  let hpSuction: number;
   if (feedEnabled) hpSuction = A.n('hp_min_suction_bar');
   else {
-    hpSuction = round(mToBar(RAW_TANK_LEVEL_M - lpFriction - lpElev) - ptDpBar - cartDpBar, 2);
+    hpSuction = round(mToBar(A.n('tank_min_level_m') - lpLoss) - pt.totalDpBar - cartDpBar, 2);
     if (prod.valid && hpSuction < A.n('hp_min_suction_bar'))
-      f.critical('Pumps', 'hp_suction', `Insufficient feed pressure at the HP pump suction: ≈ ${hpSuction} bar available vs ${A.n('hp_min_suction_bar')} bar required (pretreatment ${ptDpBar} bar + cartridge ${cartDpBar} bar losses). Enable the feed/booster pump.`);
+      f.critical('Pumps', 'hp_suction', `Feed pressure insufficient at the HP pump suction: ≈ ${hpSuction} bar available vs ${A.n('hp_min_suction_bar')} bar required (pretreatment ${pt.totalDpBar} bar + cartridge ${cartDpBar} bar + piping losses). Enable the feed/booster pump.`);
   }
 
   // HP pump
-  const hpPipe = pipe('hp_to_ro');
   const hpComp: HeadComponent[] = [
-    { label: 'Required membrane feed pressure', headM: barToM(mem.feedPressureBar ?? 0), note: mem.feedPressureBar != null ? `${mem.feedPressureBar} bar` : 'NOT AVAILABLE' },
-    { label: 'HP → RO pipe friction + fittings', headM: hpPipe.totalLossM, note: `DN ${hpPipe.dn}` },
-    { label: 'HP → RO static elevation', headM: hpPipe.elevationM, note: '' },
-    { label: 'Less: suction pressure', headM: -barToM(Math.max(hpSuction ?? 0, 0)), note: `${Math.max(hpSuction ?? 0, 0)} bar` },
+    { category: 'terminal', label: 'Required membrane feed pressure', headM: barToM(mem.feedPressureBar ?? 0), note: mem.feedPressureBar != null ? `${mem.feedPressureBar} bar (array solution)` : 'INSUFFICIENT DATA' },
+    ...pipeComps(['hp_to_ro']),
+    ...extra('hp'),
+    { category: 'suction', label: 'Suction pressure', headM: -barToM(Math.max(hpSuction, 0)), note: `${Math.max(hpSuction, 0)} bar` },
   ];
-  if (mem.available && mem.feedPressureBar == null) f.critical('Pumps', 'hp_no_pressure', 'HP pump pressure cannot be calculated: feed TDS is missing. INSUFFICIENT DATA — LAB ANALYSIS REQUIRED.');
+  const hpCanCalc = prod.valid && mem.available && mem.feedPressureBar != null;
+  if (mem.available && mem.feedPressureBar == null) f.critical('Pumps', 'hp_no_pressure', 'HP pump pressure cannot be calculated – INSUFFICIENT DATA (membrane feed pressure not available).');
   const hp = buildPump({
-    id: 'hp', name: 'High-pressure RO pump', pumpType: 'high_pressure', enabled: prod.valid && mem.available, processFlowM3h: prod.feedM3h, components: hpComp, effKey: 'hp_pump_eff',
-    suctionPressureBar: Math.max(hpSuction ?? 0, 0),
-    notes: ['Pretreatment pressure loss is overcome by the feed pump; the HP pump provides membrane feed pressure minus suction pressure.', 'Energy recovery device not included (brackish design).'],
+    id: 'hp', name: 'High-pressure RO pump', pumpType: 'high_pressure', enabled: hpCanCalc, processFlowM3h: prod.feedM3h, flowOverrideM3h: flowOv('hp'), components: hpComp,
+    effKey: 'hp_pump_eff', efficiencyOverride: effOv('hp'), suctionPressureBar: Math.max(hpSuction, 0), selectedPump: libPump('hp'),
+    npshAvailableM: A.n('atm_head_m') + barToM(Math.max(hpSuction, 0)) - vap, npshNote: `NPSHa = (P_suction ${Math.max(hpSuction, 0)} bar + atmosphere) as head − vapour ${round(vap, 2)} m`,
+    notes: ['Pretreatment losses are overcome by the feed pump; the HP pump raises suction pressure to the membrane feed pressure.', 'Energy recovery device not included.'],
   }, ctx.pumps, A, f);
   pumps.push(hp);
   if (hp.enabled && hp.dischargePressureBar != null && ctx.membrane?.maxPressureBar && hp.dischargePressureBar > ctx.membrane.maxPressureBar)
-    f.review('Pumps', 'hp_max', `HP pump design discharge ${hp.dischargePressureBar} bar (incl. safety margin) exceeds the membrane maximum ${ctx.membrane.maxPressureBar} bar – limit with VFD/pressure switch.`);
+    f.review('Pumps', 'hp_max', `HP pump design discharge ${hp.dischargePressureBar} bar (incl. head margin) exceeds the membrane maximum ${ctx.membrane.maxPressureBar} bar – limit with VFD / high-pressure switch.`);
 
   // Product pump
-  const pdPipe = pipe('product_to_distribution');
-  const hd = input.hydraulics.distributionHeadM;
+  const hd = H.distributionHeadM;
   if (!isNum(hd) || hd < 0) f.critical('Pumps', 'dist_head', 'Distribution head must be zero or positive.');
   pumps.push(buildPump({
-    id: 'product', name: 'Product water / distribution pump', pumpType: 'product', enabled: input.hydraulics.productPumpEnabled && prod.valid, processFlowM3h: distFlow,
+    id: 'product', name: 'Product water / distribution pump', pumpType: 'product', enabled: H.productPumpEnabled && prod.valid, processFlowM3h: distFlow, flowOverrideM3h: flowOv('product'),
     components: [
-      { label: 'Required distribution head', headM: isNum(hd) ? Math.max(hd, 0) : 0, note: 'project input' },
-      { label: 'Pipe friction + fittings', headM: pdPipe.totalLossM, note: `${pdPipe.lengthM} m, DN ${pdPipe.dn}` },
-      { label: 'Static elevation', headM: pdPipe.elevationM, note: '' },
+      { category: 'terminal', label: 'Required head at point of use', headM: isNum(hd) ? Math.max(hd, 0) : 0, note: `${hd} m (project input)` },
+      ...pipeComps(['product_to_distribution']),
+      ...extra('product'),
     ],
-    effKey: 'product_pump_eff', suctionPressureBar: 0,
+    effKey: 'product_pump_eff', efficiencyOverride: effOv('product'), suctionPressureBar: 0, selectedPump: libPump('product'),
+    npshAvailableM: tankNpsha(null), npshNote: `NPSHa = H_atm ${A.n('atm_head_m')} + min level ${A.n('tank_min_level_m')} − vapour ${round(vap, 2)} m (suction line loss neglected)`,
   }, ctx.pumps, A, f));
 
   // CIP pump
-  if (input.pretreatment.cip && mem.available) {
+  if (input.pretreatment.cip && mem.available && mem.stageDetail.length) {
     const maxVessels = Math.max(...mem.stageDetail.map((s) => s.vessels));
     pumps.push(buildPump({
-      id: 'cip', name: 'CIP (cleaning) pump', pumpType: 'cip', enabled: true, processFlowM3h: maxVessels * A.n('cip_flow_per_vessel'),
-      components: [{ label: 'CIP circuit head', headM: A.n('cip_head_m'), note: 'assumption' }], effKey: 'cip_pump_eff', applyFlowMargin: false, suctionPressureBar: 0,
-      notes: [`${maxVessels} vessels (largest stage) × ${A.n('cip_flow_per_vessel')} m³/h`],
+      id: 'cip', name: 'CIP (cleaning) pump', pumpType: 'cip', enabled: true, processFlowM3h: maxVessels * A.n('cip_flow_per_vessel') * Math.pow((ctx.membrane?.diameterIn ?? 8) / 8, 2), flowOverrideM3h: flowOv('cip'),
+      components: [{ category: 'terminal', label: 'CIP circuit head', headM: A.n('cip_head_m'), note: 'assumption' }, ...extra('cip')], effKey: 'cip_pump_eff', efficiencyOverride: effOv('cip'),
+      applyFlowMargin: false, suctionPressureBar: 0, selectedPump: libPump('cip'), npshAvailableM: null, npshNote: 'Not evaluated (intermittent duty)',
+      notes: [`${maxVessels} vessels (largest stage) × ${A.n('cip_flow_per_vessel')} m³/h per 8" vessel`],
     }, ctx.pumps, A, f));
   }
 
@@ -224,11 +274,12 @@ export function runDesign(input: DesignInput, ctx: DesignContext): DesignResult 
     reject_to_drain: 4,
     product_to_distribution: pr('product')?.enabled ? pr('product')!.designPressureBar : 4,
   };
-  const pipes = calcPipeSections(sf, input.hydraulics.pipes, ctx.pipeSizes, ctx.pipeMaterials, T, A, f);
+  const pipes = calcPipeSections(sf, H.pipes, H.frictionMethod, ctx.pipeSizes, ctx.pipeMaterials, Tv, A, f);
+  if (T === null) f.review('Pipes', 'visc_temp', 'Water temperature not entered – 20 °C used for viscosity in pipe-friction calculations.');
 
   // ------------------------------------------------ Dosing, tanks, electrical
   const hours = prod.valid ? input.production.operatingHours : 0;
-  const dosing = calcDosing(w, prod, pt, hours, A, f);
+  const dosing = calcDosing(w, prod, pt, input.pretreatment, hours, A, f);
   const tanks = calcTanks(input.tanks, prod, mem, dosing, input.pretreatment.cip, A, f);
   const uvKw = ptIn(pt, 'uv') ? prod.permeateM3h * A.n('uv_kw_per_m3h') : 0;
   const elec = calcElectrical(pumps, dosing, uvKw, hours, prod.dailyProductionM3d, A, f);
@@ -239,12 +290,12 @@ export function runDesign(input: DesignInput, ctx: DesignContext): DesignResult 
   const cost = calcCost(bom, input.costing);
 
   // ------------------------------------------------ PFD
-  const chem = (id: string, name: string) => (ptIn(pt, id as never) ? [name] : []);
+  const chm = (id: string, name: string) => (ptIn(pt, id as never) ? [name] : []);
   const sourceLabel: Record<string, string> = { well: 'Borehole', surface: 'Surface water intake', municipal: 'Municipal supply', seawater_well: 'Beach well', seawater_open: 'Seawater intake' };
   const main: PfdNode[] = [{ id: 'source', label: sourceLabel[w.source], sub: WATER_SOURCE_LABELS[w.source], kind: 'source', chemicals: [] }];
-  if (rawP?.enabled) main.push({ id: 'raw_pump', label: 'Raw Water Pump', sub: `${rawP.designFlowM3h} m³/h @ ${rawP.designHeadM} m`, kind: 'pump', chemicals: chem('prechlorination', 'NaOCl (pre-chlorination)') });
+  if (rawP?.enabled) main.push({ id: 'raw_pump', label: 'Raw Water Pump', sub: `${rawP.designFlowM3h} m³/h @ ${rawP.designHeadM} m`, kind: 'pump', chemicals: chm('prechlorination', 'NaOCl (pre-chlorination)') });
   const rawTank = tanks.find((t) => t.id === 'raw');
-  main.push({ id: 'raw_tank', label: 'Raw Water Tank', sub: `${rawTank?.recommendedM3 ?? 0} m³`, kind: 'tank', chemicals: rawP?.enabled ? [] : chem('prechlorination', 'NaOCl (pre-chlorination)') });
+  main.push({ id: 'raw_tank', label: 'Raw Water Tank', sub: `${rawTank?.recommendedM3 ?? 0} m³`, kind: 'tank', chemicals: rawP?.enabled ? [] : chm('prechlorination', 'NaOCl (pre-chlorination)') });
   if (feedP?.enabled) main.push({ id: 'feed_pump', label: 'Feed Pump', sub: `${feedP.designFlowM3h} m³/h @ ${feedP.designHeadM} m`, kind: 'pump', chemicals: [] });
   const filterOrder: [string, string][] = [['sand_filter', 'Sand Filter'], ['iron_removal', 'Iron/Mn Filter'], ['manganese_removal', 'Manganese Filter'], ['mmf', 'Multimedia Filter'], ['acf', 'Carbon Filter'], ['softener', 'Softener']];
   for (const [id, label] of filterOrder) {
@@ -258,13 +309,13 @@ export function runDesign(input: DesignInput, ctx: DesignContext): DesignResult 
   const cartItem = pt.items.find((i) => i.id === 'cartridge');
   main.push({
     id: 'cartridge', label: 'Cartridge Filter', sub: cartItem?.sizing?.kind === 'cartridge' ? `${cartItem.sizing.micron} µm, ${cartItem.sizing.housings} × ${cartItem.sizing.roundsPerHousing} × 40"` : '', kind: 'filter',
-    chemicals: [...chem('acid', 'HCl (acid)'), ...chem('smbs', 'SMBS'), ...chem('antiscalant', 'Antiscalant')],
+    chemicals: [...chm('acid', 'HCl (acid)'), ...chm('smbs', 'SMBS'), ...chm('antiscalant', 'Antiscalant')],
   });
   if (hp.enabled) main.push({ id: 'hp_pump', label: 'High Pressure Pump', sub: `${hp.designFlowM3h} m³/h @ ${hp.dischargePressureBar} bar`, kind: 'pump', chemicals: [] });
   main.push({ id: 'ro', label: 'RO Membranes', sub: mem.available ? `${mem.elements} el. / ${mem.vessels} PV, ${mem.arrayLabel.split(' ')[0]}` : 'not designed', kind: 'membrane', chemicals: [] });
   if (ptIn(pt, 'uv')) main.push({ id: 'uv', label: 'UV Steriliser', sub: `${round(prod.permeateM3h, 1)} m³/h`, kind: 'uv', chemicals: [] });
   const permTank = tanks.find((t) => t.id === 'permeate');
-  main.push({ id: 'permeate_tank', label: 'Permeate Tank', sub: `${permTank?.recommendedM3 ?? 0} m³`, kind: 'tank', chemicals: chem('post_chlorination', 'NaOCl (post-chlorination)') });
+  main.push({ id: 'permeate_tank', label: 'Permeate Tank', sub: `${permTank?.recommendedM3 ?? 0} m³`, kind: 'tank', chemicals: chm('post_chlorination', 'NaOCl (post-chlorination)') });
   const prodP = pr('product');
   if (prodP?.enabled) main.push({ id: 'product_pump', label: 'Product Pump', sub: `${prodP.designFlowM3h} m³/h @ ${prodP.designHeadM} m`, kind: 'pump', chemicals: [] });
   main.push({ id: 'product', label: 'Product Water', sub: `${round(prod.permeateM3h, 2)} m³/h, ${mem.permeateTdsMgL ?? '–'} mg/L`, kind: 'product', chemicals: [] });
@@ -287,16 +338,39 @@ export function runDesign(input: DesignInput, ctx: DesignContext): DesignResult 
     feedPressureBar: mem.feedPressureBar,
     permeateTdsMgL: mem.permeateTdsMgL,
     hpFlowM3h: hp.designFlowM3h,
-    hpPressureBar: hp.dischargePressureBar,
+    hpPressureBar: hp.enabled ? hp.dischargePressureBar : null,
     hpHeadM: hp.designHeadM,
-    hpMotorKw: hp.motorKw,
+    hpMotorKw: hp.standardMotorKw,
+    hpRequiredMotorKw: hp.requiredMotorKw,
     rawFlowM3h: rawP?.designFlowM3h ?? 0,
     rawHeadM: rawP?.designHeadM ?? 0,
-    rawMotorKw: rawP?.motorKw ?? 0,
+    rawMotorKw: rawP?.standardMotorKw ?? 0,
+    rawRequiredMotorKw: rawP?.requiredMotorKw ?? 0,
+    osmoticFeedBar: chem.osmoticFeedBar,
+    configMode: mem.configMode,
     connectedKw: elec.connectedKw,
     runningKw: elec.runningKw,
     specificEnergyKwhM3: elec.specificEnergyKwhM3,
     pipeSizes: pipes.map((p) => ({ label: p.label, dn: p.flowM3h > 0 ? p.dn : null })),
+  };
+
+  // ------------------------------------------------ traceability ("How was this calculated?")
+  const hours0 = input.production.operatingHours;
+  const trace: Record<string, CalcStep[]> = {
+    production: prod.steps,
+    daily: [step('Daily production', 'Q_p × operating hours', prod.dailyProductionM3d, 'm³/day', `Q_p ${n(prod.permeateM3h)} m³/h × ${hours0} h`)],
+    recovery: [step('Recovery', 'R = Q_p ÷ Q_f × 100', prod.feedM3h > 0 ? (prod.permeateM3h / prod.feedM3h) * 100 : 0, '%', `Q_p ${n(prod.permeateM3h)} m³/h, Q_f ${n(prod.feedM3h)} m³/h`, 'Desired recovery is a project input')],
+    feed: [step('Feed flow', 'Q_f = Q_p ÷ R', prod.feedM3h, 'm³/h', `Q_p ${n(prod.permeateM3h)} m³/h, R ${prod.recoveryPct} %`)],
+    reject: [step('Reject flow', 'Q_c = Q_f − Q_p', prod.rejectM3h, 'm³/h', `Q_f ${n(prod.feedM3h)}, Q_p ${n(prod.permeateM3h)} m³/h`)],
+    membranes: mem.steps.slice(0, 3),
+    flux: mem.steps.filter((x) => /flux/i.test(x.label)),
+    feedPressure: mem.steps.filter((x) => /pressure|permeability|correction/i.test(x.label)),
+    permeateTds: mem.steps.filter((x) => /TDS|rejection|Salt/i.test(x.label)),
+    hpPump: hp.steps,
+    rawPump: rawP?.steps ?? [],
+    electrical: elec.steps,
+    pipes: pipes.map((p) => step(p.label, 'd = √(4Q/πv_max) → catalogue DN', p.dn ? `DN ${p.dn}` : '–', '', `Q ${p.flowM3h} m³/h, v_max ${p.maxVelocity} m/s → d ${p.requiredIdMm} mm; v ${p.velocity} m/s`, p.material)),
+    osmotic: chem.steps.filter((x) => /osmotic/i.test(x.label)),
   };
 
   const order: Record<Level, number> = { critical: 0, review: 1, ok: 2 };
@@ -308,12 +382,14 @@ export function runDesign(input: DesignInput, ctx: DesignContext): DesignResult 
     engineVersion: ENGINE_VERSION,
     calculatedAt: new Date().toISOString(),
     water,
+    chemistry: chem,
     production: prod,
     membrane: mem,
     pretreatment: pt,
     pipes,
     pumps,
     hpSuctionAvailableBar: hpSuction,
+    trace,
     dosing,
     tanks,
     electrical: elec,
@@ -329,11 +405,14 @@ export function runDesign(input: DesignInput, ctx: DesignContext): DesignResult 
 
 export * from './common';
 export { sizePipe, PIPE_SECTIONS } from './pipes';
-export type { PipeSectionResult, PipeCalcResult } from './pipes';
+export type { PipeSectionResult, PipeCalcResult, FittingLine } from './pipes';
 export { PT_STATUS_LABEL, INSUFFICIENT } from './pretreatment';
 export type { PretreatmentItem, PretreatmentResult } from './pretreatment';
-export type { PumpResult } from './pumps';
-export type { MembraneResult } from './membrane';
+export type { PumpResult, OperatingPoint, HeadComponent } from './pumps';
+export { HEAD_CATEGORY_LABEL, curveHead } from './pumps';
+export type { ChemistryResult, Indicator, IonRow } from './chemistry';
+export { LAB_REQUIRED } from './chemistry';
+export type { MembraneResult, StageResult, ElementResult } from './membrane';
 export type { BomLine, CostResult } from './bom';
 export type { DosingLine } from './dosing';
 export type { TankResult } from './tanks';

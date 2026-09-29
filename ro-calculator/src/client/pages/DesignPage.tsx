@@ -8,13 +8,13 @@ import { fmt, fmtFlow } from '../../shared/units';
 import { api } from '../api';
 import { AssumptionsEditor } from '../components/AssumptionsEditor';
 import { PfdDiagram } from '../components/PfdDiagram';
-import { BomEditor, CostPanel, ElectricalResults, MembraneResults, PipeResults, PretreatmentResults, PumpResults, SummaryDashboard, TankResults } from '../components/Results';
+import { BomEditor, ChemistryResults, CostPanel, ElectricalResults, MembraneResults, PipeResults, PretreatmentResults, PumpResults, SummaryDashboard, TankResults } from '../components/Results';
 import { Card, Checkbox, Counts, Disclaimer, Empty, FindingsList, NumField, PageHeader, SelectField, StepsTable, Tabs, TextField } from '../components/ui';
 import { useApp, useProjectDesign } from '../context';
 
 type TabId =
   | 'project' | 'production' | 'water' | 'membrane' | 'hydraulics' | 'treatment' | 'tanks' | 'assumptions'
-  | 'summary' | 'r_membrane' | 'r_pumps' | 'r_pipes' | 'r_pretreatment' | 'r_tanks' | 'r_electrical' | 'r_pfd' | 'r_bom' | 'r_warnings';
+  | 'summary' | 'r_chem' | 'r_membrane' | 'r_pumps' | 'r_pipes' | 'r_pretreatment' | 'r_tanks' | 'r_electrical' | 'r_pfd' | 'r_bom' | 'r_warnings';
 
 const TABS: { id: TabId; label: string; group: string }[] = [
   { id: 'project', label: 'Project', group: 'Inputs' },
@@ -26,7 +26,8 @@ const TABS: { id: TabId; label: string; group: string }[] = [
   { id: 'tanks', label: 'Tanks', group: 'Inputs' },
   { id: 'assumptions', label: 'Assumptions', group: 'Inputs' },
   { id: 'summary', label: 'Summary', group: 'Results' },
-  { id: 'r_membrane', label: 'RO / Membranes', group: 'Results' },
+  { id: 'r_chem', label: 'Water Chemistry', group: 'Results' },
+  { id: 'r_membrane', label: 'RO / Membranes (stage-by-stage)', group: 'Results' },
   { id: 'r_pumps', label: 'Pumps', group: 'Results' },
   { id: 'r_pipes', label: 'Pipes', group: 'Results' },
   { id: 'r_pretreatment', label: 'Pretreatment & Dosing', group: 'Results' },
@@ -237,13 +238,50 @@ export function DesignPage() {
                   placeholder={`default ${data.assumptions.elements_per_vessel}`}
                 />
                 <NumField label="Design flux" unit="LMH" value={data.membrane.designFluxLmh} onChange={(v) => update((d) => void (d.membrane.designFluxLmh = v))} placeholder="assumption for source type" hint="Empty = design-flux assumption for the selected water source" />
-                <SelectField<number>
-                  label="Number of stages"
-                  value={data.membrane.stages ?? 0}
-                  options={[{ value: 0, label: 'Automatic (from recovery)' }, { value: 1, label: '1 stage' }, { value: 2, label: '2 stages' }, { value: 3, label: '3 stages' }]}
-                  onChange={(v) => update((d) => void (d.membrane.stages = v || null))}
+                <SelectField<string>
+                  label="Array configuration"
+                  value={data.membrane.vesselsPerStage ? 'manual' : 'auto'}
+                  options={[{ value: 'auto', label: 'Automatic (from flux and recovery)' }, { value: 'manual', label: 'Manual: vessels per stage' }]}
+                  onChange={(v) => update((d) => void (d.membrane.vesselsPerStage = v === 'manual' ? (result?.membrane.vesselsPerStage.length ? [...result.membrane.vesselsPerStage] : [2, 1]) : null))}
                 />
+                {!data.membrane.vesselsPerStage && (
+                  <SelectField<number>
+                    label="Number of stages (automatic mode)"
+                    value={data.membrane.stages ?? 0}
+                    options={[{ value: 0, label: 'Automatic (from recovery)' }, { value: 1, label: '1 stage' }, { value: 2, label: '2 stages' }, { value: 3, label: '3 stages' }]}
+                    onChange={(v) => update((d) => void (d.membrane.stages = v || null))}
+                  />
+                )}
               </div>
+              {data.membrane.vesselsPerStage && (
+                <div className="array-editor">
+                  {data.membrane.vesselsPerStage.map((v, i) => (
+                    <label key={i} className="field">
+                      <span className="field-label">Stage {i + 1} vessels</span>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={v}
+                        onChange={(e) => update((d) => void ((d.membrane.vesselsPerStage as number[])[i] = Math.max(1, Math.round(Number(e.target.value) || 1))))}
+                      />
+                    </label>
+                  ))}
+                  {data.membrane.vesselsPerStage.length < 4 && (
+                    <button className="btn btn-sm" onClick={() => update((d) => void (d.membrane.vesselsPerStage as number[]).push(1))}>
+                      + stage
+                    </button>
+                  )}
+                  {data.membrane.vesselsPerStage.length > 1 && (
+                    <button className="btn btn-sm btn-ghost" onClick={() => update((d) => void (d.membrane.vesselsPerStage as number[]).pop())}>
+                      − stage
+                    </button>
+                  )}
+                  <span className="muted small">
+                    {data.membrane.vesselsPerStage.join(':')} = {data.membrane.vesselsPerStage.reduce((a, b) => a + b, 0)} vessels × {data.membrane.elementsPerVessel ?? String(data.assumptions.elements_per_vessel)} elements
+                  </span>
+                </div>
+              )}
               {(() => {
                 const m = library.membranes.find((x) => x.id === data.membrane.membraneId);
                 if (!m) return <p className="danger">No membrane selected.</p>;
@@ -266,8 +304,14 @@ export function DesignPage() {
                 <Checkbox label="Product / distribution pump" checked={data.hydraulics.productPumpEnabled} onChange={(v) => update((d) => void (d.hydraulics.productPumpEnabled = v))} />
                 <NumField label="Distribution flow" unit="m³/h" value={data.hydraulics.distributionFlowM3h} onChange={(v) => update((d) => void (d.hydraulics.distributionFlowM3h = v))} placeholder="= peak demand or permeate flow" />
                 <NumField label="Required distribution head" unit="m" allowNull={false} value={data.hydraulics.distributionHeadM} onChange={(v) => update((d) => void (d.hydraulics.distributionHeadM = v ?? 0))} hint="Static + residual pressure needed at the point of use" />
+                <SelectField
+                  label="Pipe friction method"
+                  value={data.hydraulics.frictionMethod}
+                  options={[{ value: 'darcy', label: 'Darcy–Weisbach (Swamee–Jain)' }, { value: 'hazen', label: 'Hazen–Williams' }]}
+                  onChange={(v) => update((d) => void (d.hydraulics.frictionMethod = v))}
+                />
               </div>
-              <p className="muted small">Borehole depth, water levels, distance and elevation are entered on the Raw Water tab. Pump efficiencies, safety margins and losses are in Assumptions.</p>
+              <p className="muted small">Borehole depth, water levels, distance and elevation are entered on the Raw Water tab. Pump selection (manufacturer curve), efficiency, flow and extra valve/filter losses per pump are set on Results → Pumps. Fittings per pipe section on Results → Pipes. Default efficiencies, safety factors and K-values are in Assumptions.</p>
             </Card>
             <Card title="Pipe sections">
               <p className="muted small">Override material, maximum velocity, length, elevation or design pressure per section (empty = default).</p>
@@ -355,6 +399,14 @@ export function DesignPage() {
                 onChange={(v) => update((d) => void (d.pretreatment.postDisinfection = v))}
               />
               <Checkbox label="Include CIP (clean-in-place) system" checked={data.pretreatment.cip} onChange={(v) => update((d) => void (d.pretreatment.cip = v))} />
+              <NumField
+                label="Antiscalant dose from supplier projection"
+                unit="mg/L"
+                value={data.pretreatment.antiscalantDoseMgL}
+                onChange={(v) => update((d) => void (d.pretreatment.antiscalantDoseMgL = v))}
+                placeholder="not yet confirmed"
+                hint="Leave empty until the antiscalant supplier provides a projection – an indicative value is then used for equipment sizing only (flagged)."
+              />
             </div>
             <p className="muted small">Individual pretreatment items can be forced in/out on the Results → Pretreatment tab. The recommendation logic and its reasons are always shown.</p>
           </Card>
@@ -414,22 +466,9 @@ export function DesignPage() {
           </>
         )}
         {result && tab === 'r_membrane' && <MembraneResults result={result} units={units} />}
-        {result && tab === 'r_pumps' && <PumpResults result={result} units={units} />}
-        {result && tab === 'r_pipes' && (
-          <PipeResults
-            result={result}
-            units={units}
-            data={data}
-            onOverride={(pid, field, value) =>
-              update((d) => {
-                const cur = { ...(d.hydraulics.pipes[pid as PipeSectionId] ?? {}) } as Record<string, unknown>;
-                if (value === undefined || value === '') delete cur[field];
-                else cur[field] = value;
-                d.hydraulics.pipes[pid as PipeSectionId] = cur;
-              })
-            }
-          />
-        )}
+        {result && tab === 'r_pumps' && <PumpResults result={result} units={units} data={data} update={update} />}
+        {result && tab === 'r_pipes' && <PipeResults result={result} units={units} data={data} update={update} />}
+        {result && tab === 'r_chem' && <ChemistryResults result={result} />}
         {result && tab === 'r_pretreatment' && <PretreatmentResults result={result} data={data} onOverride={(pid, v) => update((d) => void (d.pretreatment.overrides[pid as PretreatmentItemId] = v))} />}
         {result && tab === 'r_tanks' && <TankResults result={result} />}
         {result && tab === 'r_electrical' && <ElectricalResults result={result} units={units} />}

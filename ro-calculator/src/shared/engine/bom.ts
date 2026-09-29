@@ -63,7 +63,7 @@ export function generateBom(src: BomSources): Omit<BomLine, 'unitCost' | 'total'
   for (const p of pumps) {
     if (!p.enabled) continue;
     const typ: Record<string, string> = { raw: 'Submersible borehole pump with motor', feed: 'Horizontal/vertical centrifugal feed pump', hp: 'Vertical multistage high-pressure pump, SS316', product: 'Centrifugal transfer/booster pump', cip: 'Centrifugal CIP pump, SS316 / PP' };
-    add(`pump_${p.id}`, 'Pumps', p.name, typ[p.id] ?? p.name, `${p.designFlowM3h} m³/h @ ${p.designHeadM} m (${p.designPressureBar} bar), motor ${p.motorKw} kW`, 1, 'pcs', p.libraryMatch ? `Library match: ${p.libraryMatch.pump.manufacturer} ${p.libraryMatch.pump.model}` : 'Select from manufacturer curves; consider 1 standby unit.');
+    add(`pump_${p.id}`, 'Pumps', p.name, typ[p.id] ?? p.name, `${p.designFlowM3h} m³/h @ ${p.designHeadM} m TDH (${p.designPressureBar} bar); required motor ${p.requiredMotorKw} kW → standard motor ${p.standardMotorKw} kW`, 1, 'pcs', p.selectedPump ? `Selected: ${p.selectedPump.manufacturer} ${p.selectedPump.model}${p.selectedPump.isDemo ? ' (DEMO – replace with real pump)' : ''}` : 'Select from manufacturer curves; consider 1 standby unit.');
   }
 
   // --------------------------- Pretreatment

@@ -134,7 +134,7 @@ export function calcPretreatment(
   w: RawWaterInput,
   source: WaterSource,
   tds: number | null,
-  tempC: number,
+  tempC: number | null,
   prod: ProductionResult,
   A: AssumptionReader,
   f: Findings,

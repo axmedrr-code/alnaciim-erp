@@ -1,6 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { defaultAssumptions } from '../../shared/assumptions';
-import { SEED_MEMBRANES, SEED_PIPE_MATERIALS, SEED_PUMPS, seedPipeSizes } from '../../shared/catalog';
+import { demoCurve, SEED_MEMBRANES, SEED_PIPE_MATERIALS, SEED_PUMPS, seedPipeSizes } from '../../shared/catalog';
 import { sample30m3h } from '../../shared/sample';
 import { DEFAULT_UNITS } from '../../shared/units';
 import type { Db } from './client';
@@ -44,8 +44,15 @@ export function seedIfEmpty(db: Db, opts: { sampleProject?: boolean } = {}) {
         report.push(`setting ${key}`);
       }
     }
+    // Upgrade from version 1: give DEMO pumps without a curve a DEMO curve (clearly flagged as DEMO)
+    for (const p of t.select().from(pumps).where(eq(pumps.isDemo, true)).all()) {
+      if (!p.curve || p.curve.length === 0) {
+        t.update(pumps).set({ curve: demoCurve(p.ratedFlowM3h, p.ratedHeadM, p.shutoffHeadM, p.efficiencyPct, p.pumpType === 'borehole' ? null : 3) }).where(eq(pumps.id, p.id)).run();
+        report.push(`DEMO curve for ${p.model}`);
+      }
+    }
     if (opts.sampleProject !== false && count(t, projects) === 0) {
-      const bw = t.select().from(membranes).where(eq(membranes.model, 'BW30-400')).get();
+      const bw = t.select().from(membranes).where(eq(membranes.model, SEED_MEMBRANES[0].model)).get();
       const d = sample30m3h(defaultAssumptions(), bw?.id ?? null);
       t.insert(projects).values({ name: d.project.name, customer: d.project.customer, location: d.project.location, reference: d.project.reference, data: JSON.stringify(d), createdAt: now, updatedAt: now }).run();
       report.push('sample project "30 m³/h RO System"');

@@ -29,6 +29,13 @@ export const membranes = sqliteTable('membranes', {
   testTdsMgL: real('test_tds_mg_l'),
   testRecoveryPct: real('test_recovery_pct'),
   maxFeedFlowM3h: real('max_feed_flow_m3h'),
+  recFluxMinLmh: real('rec_flux_min_lmh'),
+  recFluxMaxLmh: real('rec_flux_max_lmh'),
+  maxElementRecoveryPct: real('max_element_recovery_pct'),
+  minConcentrateM3h: real('min_concentrate_m3h'),
+  maxElementDpBar: real('max_element_dp_bar'),
+  isDemo: integer('is_demo', { mode: 'boolean' }).notNull().default(false),
+  dataSource: text('data_source').notNull().default(''),
   notes: text('notes').notNull().default(''),
   builtin: integer('builtin', { mode: 'boolean' }).notNull().default(false),
 });
@@ -45,6 +52,9 @@ export const pumps = sqliteTable('pumps', {
   shutoffHeadM: real('shutoff_head_m').notNull(),
   motorKw: real('motor_kw').notNull(),
   efficiencyPct: real('efficiency_pct').notNull(),
+  /** JSON array of {flowM3h, headM, efficiencyPct, npshrM} */
+  curve: text('curve', { mode: 'json' }).$type<{ flowM3h: number; headM: number; efficiencyPct: number | null; npshrM: number | null }[]>().notNull().default([]),
+  isDemo: integer('is_demo', { mode: 'boolean' }).notNull().default(false),
   notes: text('notes').notNull().default(''),
   builtin: integer('builtin', { mode: 'boolean' }).notNull().default(false),
 });
@@ -52,6 +62,7 @@ export const pumps = sqliteTable('pumps', {
 export const pipeMaterials = sqliteTable('pipe_materials', {
   name: text('name').primaryKey(),
   roughnessMm: real('roughness_mm').notNull(),
+  hazenC: real('hazen_c').notNull().default(140),
   description: text('description').notNull().default(''),
 });
 
