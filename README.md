@@ -1,5 +1,8 @@
 # Alnaciim Water Company — Inventory & Manufacturing ERP
 
+> **Also in this repository:** [`ro-calculator/`](ro-calculator) — a standalone, local-only (localhost + SQLite)
+> **RO System Engineering Calculator** for preliminary RO water-treatment design. See [ro-calculator/README.md](ro-calculator/README.md).
+
 Full system design + a working implementation scaffold for a real water purification,
 bottling, ice production, and distribution company.
 

@@ -1,0 +1,51 @@
+{
+  "name": "ro-system-engineering-calculator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local-only RO water treatment system engineering calculator (localhost, SQLite).",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "tsx watch src/server/index.ts",
+    "dev:client": "vite",
+    "build": "vite build",
+    "start": "tsx src/server/index.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.server.json",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/server/db/cli.ts migrate",
+    "db:seed": "tsx src/server/db/cli.ts seed",
+    "db:reset": "tsx src/server/db/cli.ts reset"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.3",
+    "express": "^5.2.1",
+    "pdfkit": "^0.17.2",
+    "zod": "^4.6.5",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.4",
+    "@types/pdfkit": "^0.17.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/supertest": "^7.2.1",
+    "@vitejs/plugin-react": "^5.2.0",
+    "concurrently": "^10.0.5",
+    "drizzle-kit": "^0.31.11",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^7.18.4",
+    "supertest": "^7.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.3",
+    "vitest": "^3.2.7"
+  }
+}
