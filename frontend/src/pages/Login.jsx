@@ -5,8 +5,8 @@ import { useAuth } from '../context/AuthContext';
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState('admin@alnaciim.com');
-  const [password, setPassword] = useState('Password123!');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -43,7 +43,6 @@ export default function Login() {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
-        <p className="hint">Seed users: admin@alnaciim.com, sales.mgr@alnaciim.com, storekeeper.rm@alnaciim.com… password "Password123!"</p>
       </div>
     </div>
   );

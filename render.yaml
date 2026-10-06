@@ -1,0 +1,49 @@
+# =====================================================================
+# TEST ENVIRONMENT ONLY — temporary backend for the Alnaciim ERP.
+#
+# This Blueprint creates a SEPARATE Render service. It does not touch,
+# replace, or depend on the Railway deployment (backend/railway.json is
+# unchanged and remains the fallback). Nothing here deploys until you
+# create the Blueprint in the Render dashboard.
+#
+# No secrets live in this file. The three `sync: false` variables below
+# are prompted for in the Render dashboard and stored only there:
+#   DATABASE_URL  - the TEST Neon connection string (never Railway's)
+#   JWT_SECRET    - a NEW random value generated just for TEST
+#   CORS_ORIGIN   - exact, comma-separated frontend/POS origins (see
+#                   docs/DEPLOY_TEST.md); never "*"
+# =====================================================================
+services:
+  - type: web
+    name: alnaciim-erp-test-api
+    runtime: node
+    plan: free
+    branch: main
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    # Manual deploys only while this is TEST — no surprise redeploys on push.
+    autoDeploy: false
+    envVars:
+      # PORT is injected by Render automatically (the app reads process.env.PORT).
+      - key: NODE_VERSION
+        value: "22"
+      # Neon (like all managed Postgres) requires SSL.
+      - key: DATABASE_SSL
+        value: "true"
+      - key: JWT_EXPIRES_IN
+        value: 8h
+      # The in-app backup feature shells out to pg_dump, which Render's Node
+      # runtime doesn't have (and its disk is ephemeral). An unparseable cron
+      # makes the app skip scheduling it (index.js logs one line and moves
+      # on) instead of failing a nightly backup. Real backups happen at the
+      # Neon/pg_dump level, not through the app, in this environment.
+      - key: BACKUP_CRON_SCHEDULE
+        value: disabled
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
