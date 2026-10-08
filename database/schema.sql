@@ -1263,9 +1263,8 @@ ALTER TABLE production_batches ADD COLUMN qc_status VARCHAR(20) NOT NULL DEFAULT
 -- BILLING & COLLECTIONS (see migrations/025_billing_collections.sql)
 -- =====================================================================
 
-INSERT INTO roles (name, description)
-SELECT 'Collector', 'Records payments against assigned customer accounts'
-WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'Collector');
+-- The 'Collector' role is inserted by seed.sql (after the other roles, so seeded role ids
+-- stay Admin = 1 ... Driver = 9). Existing databases got it from migrations/025.
 
 ALTER TABLE customers ADD COLUMN collector_id INT REFERENCES users(id);
 

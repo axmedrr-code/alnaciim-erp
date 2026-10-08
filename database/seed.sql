@@ -132,10 +132,13 @@ INSERT INTO customers (code, name, type, phone, email, address, city, credit_lim
 -- ---------------------------------------------------------------------
 -- TRUCKS
 -- ---------------------------------------------------------------------
-INSERT INTO trucks (plate_number, model, capacity, capacity_unit, status, assigned_driver_id) VALUES
- ('SL-1234-A', 'Isuzu NPR',      6000,  'liters',  'active', 10),
- ('SL-5678-B', 'Toyota Dyna',    3000,  'liters',  'active', 11),
- ('SL-9012-C', 'Mitsubishi Fuso',8, 'tons',        'active', NULL);
+-- truck_code is NOT NULL in the final schema (migrations/014_dispatch_center_v2.sql).
+-- On a fresh database that migration's backfill runs against an empty table, so the
+-- codes must be supplied here — same 'TRK-' || LPAD(id, 3, '0') format it backfills.
+INSERT INTO trucks (truck_code, plate_number, model, capacity, capacity_unit, status, assigned_driver_id) VALUES
+ ('TRK-001', 'SL-1234-A', 'Isuzu NPR',      6000,  'liters',  'active', 10),
+ ('TRK-002', 'SL-5678-B', 'Toyota Dyna',    3000,  'liters',  'active', 11),
+ ('TRK-003', 'SL-9012-C', 'Mitsubishi Fuso',8, 'tons',        'active', NULL);
 
 -- ---------------------------------------------------------------------
 -- PRICE LISTS
@@ -669,6 +672,14 @@ INSERT INTO roles (name, description) VALUES
  ('Cashier',              'Collects and reconciles payments in the field'),
  ('Supervisor',           'Oversees operators, dispatch, and daily closing'),
  ('Route Supervisor',     'Plans and dispatches routes, oversees assigned routes');
+
+-- Billing & Collections (migrations/025_billing_collections.sql) adds this role. It lives
+-- here, after the roles above, rather than in schema.sql: the users seeded earlier in this
+-- file refer to roles by numeric id (Admin = 1 ... Driver = 9), so no role may be inserted
+-- before them. Idempotent, matching the migration.
+INSERT INTO roles (name, description)
+SELECT 'Collector', 'Records payments against assigned customer accounts'
+WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'Collector');
 
 -- Each mobile-money wallet gets its own Chart of Accounts row — bank_accounts.coa_account_id
 -- is unique per account, and each wallet is a distinct pool of funds from the main bank account.
