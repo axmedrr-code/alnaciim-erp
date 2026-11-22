@@ -28,14 +28,15 @@ router.get('/', asyncHandler(async (req, res) => {
     // matches the HNO itself - never names - and the operator still has to pick one; selecting it runs the
     // normal exact lookup. Wildcards in the input are stripped so it cannot widen the match.
     // Number-based only: just the DIGITS typed are used (letters, '-', wildcards, commas and spaces are ignored), and
-    // only HNOs that end in a number are suggested, so text rows such as "Total Persons" never appear.
+    // only HNOs that are PURELY a number (e.g. 1520, "7,739") are suggested - text HNOs such as "HNO-C-00004" or
+    // "Total Persons" never appear.
     const typed = String(hno_like).replace(/\D/g, '');
     if (!typed) {
       conditions.push('FALSE'); // no digits typed -> no suggestions
     } else {
       params.push(`%${typed}%`);
       conditions.push(`regexp_replace(c.hno, '[,\\s]', '', 'g') ILIKE $${params.length}`);
-      conditions.push(`regexp_replace(c.hno, '[,\\s]', '', 'g') ~ '[0-9]$'`);
+      conditions.push(`regexp_replace(c.hno, '[,\\s]', '', 'g') ~ '^[0-9]+$'`); // pure-number HNOs only (drum/bulk-water customers)
     }
   } else if (search) {
     params.push(`%${search}%`);
