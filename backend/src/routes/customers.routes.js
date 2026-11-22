@@ -10,7 +10,7 @@ const { logAudit } = require('../services/auditService');
 const router = Router();
 
 router.get('/', asyncHandler(async (req, res) => {
-  const { type, search, hno, qaade_id, status } = req.query;
+  const { type, search, hno, hno_like, limit, qaade_id, status } = req.query;
   const conditions = [];
   const params = [];
   if (type) { params.push(type); conditions.push(`c.type = $${params.length}`); }
@@ -23,11 +23,24 @@ router.get('/', asyncHandler(async (req, res) => {
     // is found by typing the plain number "7739".
     params.push(hno.replace(/[,\s]/g, ''));
     conditions.push(`regexp_replace(c.hno, '[,\\s]', '', 'g') = $${params.length}`);
+  } else if (hno_like) {
+    // Type-ahead for the POS HNO box: a PARTIAL HNO typed so far (digits, prefix or any part). It only ever
+    // matches the HNO itself - never names - and the operator still has to pick one; selecting it runs the
+    // normal exact lookup. Wildcards in the input are stripped so it cannot widen the match.
+    const typed = String(hno_like).replace(/[,\s%_\\]/g, '');
+    if (!typed) {
+      conditions.push('FALSE'); // nothing usable typed (e.g. only wildcards) -> no suggestions
+    } else {
+      params.push(`%${typed}%`);
+      conditions.push(`regexp_replace(c.hno, '[,\\s]', '', 'g') ILIKE $${params.length}`);
+    }
   } else if (search) {
     params.push(`%${search}%`);
     conditions.push(`(c.name ILIKE $${params.length} OR c.code ILIKE $${params.length})`);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  // Optional row cap (an integer 1-50, so it is safe to inline); the POS suggestion list uses 8.
+  const rowLimit = Math.min(Math.max(parseInt(limit, 10) || 0, 0), 50);
   // Real price/liter for Bulk Water, resolved by the customer's own price
   // tier — the same lookup tanks.routes.js uses, since the POS no longer
   // sources price from a tank record at all.
@@ -53,7 +66,7 @@ router.get('/', asyncHandler(async (req, res) => {
              WHERE so.customer_id = c.id AND cat.name = 'Bulk Water' AND so.status = 'delivered'
             ) AS last_delivery_date
      FROM customers c LEFT JOIN qaades q ON q.id = c.qaade_id
-     ${where} ORDER BY c.name`,
+     ${where} ORDER BY ${hno_like ? 'c.hno' : 'c.name'}${rowLimit ? ` LIMIT ${rowLimit}` : ''}`,
     params
   );
   res.json({ data: rows, error: null });
