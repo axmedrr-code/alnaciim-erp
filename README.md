@@ -19,7 +19,7 @@ Requires PostgreSQL 16 (or use Docker):
 
 ```bash
 docker run -d --name alnaciim_pg \
-  -e POSTGRES_USER=alnaciim -e POSTGRES_PASSWORD=alnaciim_dev_pw -e POSTGRES_DB=alnaciim_erp \
+  -e POSTGRES_USER=alnaciim -e POSTGRES_PASSWORD=<choose-a-strong-password> -e POSTGRES_DB=alnaciim_erp \
   -p 55432:5432 postgres:16-alpine
 ```
 

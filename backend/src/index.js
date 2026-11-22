@@ -47,8 +47,14 @@ if (missing.length) {
 function isHostedEnv() { return process.env.NODE_ENV === 'production' || !!process.env.RENDER || !!process.env.RAILWAY_ENVIRONMENT; }
 
 const app = express();
-// Behind Render/Railway's proxy the client IP arrives in X-Forwarded-For; trust exactly one hop there.
-if (isHostedEnv()) app.set('trust proxy', 1);
+// Behind a hosting proxy the client IP arrives in X-Forwarded-For. TRUST_PROXY_HOPS is the number of
+// proxies in front of this app whose X-Forwarded-For entry we trust (default 1 on hosted environments).
+// Verify the right value for the host with GET /api/v1/auth/client-ip (Admin) before relying on
+// per-IP rate limits; a value that is too low attributes every user to the proxy's own IP.
+if (isHostedEnv()) {
+  const hops = Number(process.env.TRUST_PROXY_HOPS);
+  app.set('trust proxy', Number.isInteger(hops) && hops >= 0 ? hops : 1);
+}
 // Security headers (also removes X-Powered-By). The API only serves JSON/files, so the
 // default CSP is fine; CORP is relaxed so the separately-hosted ERP/POS can read responses.
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
