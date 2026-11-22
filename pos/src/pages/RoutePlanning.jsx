@@ -85,14 +85,38 @@ export default function RoutePlanning() {
   const discountRef = useRef(null);
   const paymentRef = useRef(null);
 
-  // Lookup by one physical, unique drum number — never a customer list to
-  // browse, never fuzzy/contains/startsWith, never by name. The lookup only
-  // ever runs on explicit confirmation (Enter, Tab, or a barcode scanner's
-  // trailing Enter): typing itself never queries or reacts to anything, so
-  // there's no race between a debounced live search and the operator's next
-  // keystroke — the request fires once, for the exact value on screen at the
-  // moment of confirmation.
+  // HNO suggestions: as the operator types part of an HNO, a short list of matching HNOs (never matched by
+  // name) is offered to PICK from. Nothing is ever auto-selected, and a stale response (the operator typed
+  // another character meanwhile) is discarded via the sequence counter. Picking an item fills the HNO box;
+  // the exact lookup below remains the only thing that selects a customer.
+  const [suggestions, setSuggestions] = useState([]);
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const suggestSeq = useRef(0);
+  useEffect(() => {
+    const q = hnoSearch.replace(/[,\s]/g, '');
+    if (customer || !sessionOpen || q.length < 1) { suggestSeq.current += 1; setSuggestions([]); setActiveIdx(-1); return undefined; }
+    const seq = ++suggestSeq.current;
+    const timer = setTimeout(async () => {
+      try {
+        const { data } = await client.get(`/customers?hno_like=${encodeURIComponent(q)}&limit=8`);
+        if (seq === suggestSeq.current) { setSuggestions(data.data); setActiveIdx(-1); }
+      } catch (_) {
+        if (seq === suggestSeq.current) setSuggestions([]);
+      }
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [hnoSearch, customer, sessionOpen]);
+
+  // Lookup by one physical, unique drum number. The lookup that actually SELECTS a customer only runs on
+  // explicit confirmation (Enter, Tab, a scanner's trailing Enter, or clicking a suggestion) and is always an
+  // exact match for the value on screen.
   async function confirmHno(e) {
+    if (suggestions.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx((i) => (i + 1) % suggestions.length); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx((i) => (i <= 0 ? suggestions.length - 1 : i - 1)); return; }
+      if (e.key === 'Escape') { setSuggestions([]); setActiveIdx(-1); return; }
+      if (e.key === 'Enter' && activeIdx >= 0) { e.preventDefault(); chooseSuggestion(suggestions[activeIdx]); return; }
+    }
     if (e.key !== 'Enter' && e.key !== 'Tab') return;
     e.preventDefault();
     const hno = hnoSearch.replace(/[,\s]/g, '');
@@ -124,6 +148,15 @@ export default function RoutePlanning() {
   const totalAmount = Math.max(0, liters * price - disc);
   const cashReceived = paymentType === 'cash' ? totalAmount : paymentType === 'credit' ? 0 : Math.min(Number(cashReceivedInput) || 0, totalAmount);
   const outstanding = totalAmount - cashReceived;
+
+  // A suggestion is only a convenience for typing the HNO: choosing it runs the same exact lookup Enter does.
+  function chooseSuggestion(c) {
+    const hno = (c.hno || '').replace(/[,\s]/g, '');
+    setSuggestions([]); setActiveIdx(-1);
+    setHnoSearch(hno);
+    setNotFoundHno(null); setError(null);
+    pickCustomer(c);
+  }
 
   function pickCustomer(c) {
     setCustomer(c);
@@ -315,8 +348,21 @@ export default function RoutePlanning() {
             onChange={(e) => { setHnoSearch(e.target.value.replace(/,/g, '')); setCustomer(null); setNotFoundHno(null); }}
             onKeyDown={confirmHno}
           />
-          {/* No dropdown, no suggestion list, no live search — the lookup only
-              ever runs on Enter/Tab. Focus stays put either way. */}
+          {suggestions.length > 0 && (
+            <ul className="pos-suggest" role="listbox" aria-label="Matching HNOs">
+              {suggestions.map((c, i) => (
+                <li
+                  key={c.id} role="option" aria-selected={i === activeIdx}
+                  className={`pos-suggest__item${i === activeIdx ? ' is-active' : ''}`}
+                  onMouseDown={(e) => { e.preventDefault(); chooseSuggestion(c); }}
+                  onMouseEnter={() => setActiveIdx(i)}
+                >
+                  <span className="pos-suggest__hno">{(c.hno || '').replace(/[,\s]/g, '')}</span>
+                  <span className="pos-suggest__name">{c.name}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           {notFoundHno && <div className="pos-notfound">HNO {notFoundHno} not found.</div>}
         </div>
 
