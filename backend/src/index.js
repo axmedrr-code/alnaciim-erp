@@ -44,6 +44,11 @@ if (missing.length) {
   console.error(`Missing required environment variable(s): ${missing.join(', ')} — refusing to start`);
   process.exit(1);
 }
+if (process.env.JWT_SECRET.length < 32) {
+  const msg = 'JWT_SECRET is shorter than 32 characters';
+  if (isHostedEnv()) { console.error(`${msg} — refusing to start`); process.exit(1); }
+  console.warn(`WARNING: ${msg}; use a random value of at least 32 characters (required on hosted environments)`);
+}
 function isHostedEnv() { return process.env.NODE_ENV === 'production' || !!process.env.RENDER || !!process.env.RAILWAY_ENVIRONMENT; }
 
 const app = express();
@@ -72,6 +77,9 @@ app.use(cors({
     return cb(null, !isHosted);
   }
 }));
+// Unauthenticated auth endpoints never need more than a few hundred bytes — parse them with a tiny limit
+// BEFORE the large global parser (the first parser to run wins) so oversized login bodies are rejected cheaply.
+app.use('/api/v1/auth', express.json({ limit: '10kb' }));
 // Bulk import commits (thousands of rows) round-trip as JSON well past the
 // 100kb default body limit — bumped for that one real use case.
 app.use(express.json({ limit: '20mb' }));

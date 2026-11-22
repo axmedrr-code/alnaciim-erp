@@ -9,8 +9,8 @@ const idOptional = z.union([id, z.null()]).optional();
 // ---- auth ----
 const login = z.object({
   body: z.object({
-    email: z.string().email(),
-    password: z.string().min(1)
+    email: z.string().email().max(254),
+    password: z.string().min(1).max(128)
   })
 });
 

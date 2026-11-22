@@ -2,7 +2,7 @@ const { Router } = require('express');
 const bcrypt = require('bcryptjs');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
-const { requireRole } = require('../middleware/auth');
+const { requireRole, invalidateUser } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { logAudit } = require('../services/auditService');
@@ -58,6 +58,7 @@ router.put('/:id', requireRole('Admin'), validate(schemas.userUpdate), asyncHand
       params
     );
     await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'user', entityId: rows[0].id, oldValue: before[0], newValue: rows[0] });
+    invalidateUser(rows[0].id);
     return rows[0];
   });
 

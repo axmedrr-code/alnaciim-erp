@@ -49,7 +49,10 @@ function ask(question) {
   const password = process.env.NEW_PASSWORD || '';
   if (!email) throw new Error('Usage: NEW_PASSWORD=... node src/scripts/set-user-password.js <email> [--yes] [--expect-host=<host>]');
   if (password.length < 12) throw new Error('NEW_PASSWORD must be set and at least 12 characters long');
-  if (COMMON.test(password) || password.toLowerCase().includes(email.split('@')[0])) throw new Error('NEW_PASSWORD is too guessable');
+  // Only compare against the e-mail's local part when it is long enough to be meaningful (a 1-2 character
+  // local part would otherwise reject almost every password).
+  const localPart = email.split('@')[0];
+  if (COMMON.test(password) || (localPart.length >= 5 && password.toLowerCase().includes(localPart))) throw new Error('NEW_PASSWORD is too guessable');
 
   const target = describeTarget();
   if (expectHost && expectHost !== target.host) {
@@ -64,7 +67,7 @@ function ask(question) {
     if (typed !== target.db) throw new Error('Confirmation did not match — nothing changed');
   }
 
-  const hash = await bcrypt.hash(password, 12);
+  const hash = await bcrypt.hash(password, 10); // same cost the app uses elsewhere (keeps login timing uniform)
   const { rowCount } = await pool.query('UPDATE users SET password_hash = $1 WHERE lower(email) = $2', [hash, email]);
   if (!rowCount) throw new Error(`No user with email ${email} — nothing changed`);
   console.log(`Password updated for ${email}. Existing sessions stay valid until their token expires.`);

@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
@@ -9,6 +10,11 @@ const schemas = require('../validation/schemas');
 const { loginAccountLimiter, loginIpLimiter } = require('../middleware/rateLimit');
 
 const router = Router();
+
+// Compared against when the e-mail is unknown/inactive, so a failed login costs the same bcrypt work
+// either way and response time does not reveal whether an account exists (cost 10 = what the app
+// uses when it creates or resets passwords).
+const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 10);
 
 router.post('/login', loginIpLimiter, loginAccountLimiter, validate(schemas.login), asyncHandler(async (req, res) => {
   const { email, password } = req.body;
@@ -20,10 +26,9 @@ router.post('/login', loginIpLimiter, loginAccountLimiter, validate(schemas.logi
     [email]
   );
   const user = rows[0];
-  if (!user) throw new ApiError(401, 'Invalid email or password');
 
-  const valid = await bcrypt.compare(password, user.password_hash);
-  if (!valid) throw new ApiError(401, 'Invalid email or password');
+  const valid = await bcrypt.compare(password, user ? user.password_hash : DUMMY_HASH);
+  if (!user || !valid) throw new ApiError(401, 'Invalid email or password');
 
   const payload = {
     id: user.id,
@@ -32,7 +37,7 @@ router.post('/login', loginIpLimiter, loginAccountLimiter, validate(schemas.logi
     role: user.role_name,
     assignedWarehouseId: user.assigned_warehouse_id
   };
-  const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '8h' });
+  const token = jwt.sign(payload, process.env.JWT_SECRET, { algorithm: 'HS256', expiresIn: process.env.JWT_EXPIRES_IN || '8h' });
 
   res.json({ data: { token, user: payload }, error: null });
 }));
