@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const { apiLimiter } = require('./middleware/rateLimit');
 const cron = require('node-cron');
 
 const { authenticate } = require('./middleware/auth');
@@ -45,6 +47,17 @@ if (missing.length) {
 function isHostedEnv() { return process.env.NODE_ENV === 'production' || !!process.env.RENDER || !!process.env.RAILWAY_ENVIRONMENT; }
 
 const app = express();
+// Behind a hosting proxy the client IP arrives in X-Forwarded-For. TRUST_PROXY_HOPS is the number of
+// proxies in front of this app whose X-Forwarded-For entry we trust (default 1 on hosted environments).
+// Verify the right value for the host with GET /api/v1/auth/client-ip (Admin) before relying on
+// per-IP rate limits; a value that is too low attributes every user to the proxy's own IP.
+if (isHostedEnv()) {
+  const hops = Number(process.env.TRUST_PROXY_HOPS);
+  app.set('trust proxy', Number.isInteger(hops) && hops >= 0 ? hops : 1);
+}
+// Security headers (also removes X-Powered-By). The API only serves JSON/files, so the
+// default CSP is fine; CORP is relaxed so the separately-hosted ERP/POS can read responses.
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 // CORS is an exact-match allowlist from CORS_ORIGIN (comma-separated). If it is
 // not set: local dev keeps '*' (so the pos app on another port works unchanged),
 // but a hosted environment (NODE_ENV=production, or Render/Railway) fails CLOSED
@@ -114,7 +127,7 @@ v1.use('/billing', billingRoutes);
 // the pos/ app) untouched; this module never touches that code path.
 v1.use('/retail', retailRoutes);
 
-app.use('/api/v1', v1);
+app.use('/api/v1', apiLimiter, v1);
 
 app.use((req, res) => res.status(404).json({ data: null, error: 'Not found' }));
 app.use(errorHandler);
