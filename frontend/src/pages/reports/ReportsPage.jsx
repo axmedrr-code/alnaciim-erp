@@ -4,6 +4,8 @@ import { useApi } from '../../components/useApi';
 import Table from '../../components/Table';
 import GroupedTabs from '../../components/GroupedTabs';
 import DateFilterBar, { defaultDateRange, ComparisonNote } from '../../components/DateFilterBar';
+import { useAuth } from '../../context/AuthContext';
+import { canSee } from '../../utils/permissions';
 
 // Reports that only ever describe "current state" (what's in stock right now, who
 // currently owes money) don't get the date filter — a date range doesn't mean
@@ -237,34 +239,39 @@ const GROUPS = [
   {
     key: 'financial', label: 'Financial', icon: Wallet,
     items: [
-      { key: 'cash', label: 'Cash Summary', icon: Wallet, Component: CashSummaryReport },
-      { key: 'debtors', label: 'Debtors', icon: Users, Component: DebtorsReport },
-      { key: 'expenses', label: 'Expenses Report', icon: Receipt, Component: ExpensesReport }
+      { key: 'cash', label: 'Cash Summary', icon: Wallet, Component: CashSummaryReport, perm: 'FINANCE' },
+      { key: 'debtors', label: 'Debtors', icon: Users, Component: DebtorsReport, perm: 'SALES_FIN' },
+      { key: 'expenses', label: 'Expenses Report', icon: Receipt, Component: ExpensesReport, perm: 'FINANCE' }
     ]
   },
   {
     key: 'sales', label: 'Sales', icon: TrendingUp,
     items: [
-      { key: 'sales-qaade', label: 'Sales by Qaade', icon: MapPin, Component: SalesByQaadeReport },
-      { key: 'sales-customer', label: 'Sales by Customer', icon: Users, Component: SalesByCustomerReport },
-      { key: 'sales', label: 'Sales Report', icon: TrendingUp, Component: SalesReport }
+      { key: 'sales-qaade', label: 'Sales by Qaade', icon: MapPin, Component: SalesByQaadeReport, perm: 'SALES_FIN' },
+      { key: 'sales-customer', label: 'Sales by Customer', icon: Users, Component: SalesByCustomerReport, perm: 'SALES_FIN' },
+      { key: 'sales', label: 'Sales Report', icon: TrendingUp, Component: SalesReport, perm: 'SALES_FIN' }
     ]
   },
   {
     key: 'operations', label: 'Operations', icon: Factory,
     items: [
-      { key: 'inventory', label: 'Inventory Report', icon: Package, Component: InventoryReport },
-      { key: 'production', label: 'Production Report', icon: Factory, Component: ProductionReport },
-      { key: 'movements', label: 'Stock Movement Report', icon: Package, Component: StockMovementReport }
+      { key: 'inventory', label: 'Inventory Report', icon: Package, Component: InventoryReport, perm: 'INVENTORY_VIEW' },
+      { key: 'production', label: 'Production Report', icon: Factory, Component: ProductionReport, perm: 'PRODUCTION_VIEW' },
+      { key: 'movements', label: 'Stock Movement Report', icon: Package, Component: StockMovementReport, perm: 'INVENTORY_VIEW' }
     ]
   }
 ];
 
 export default function ReportsPage() {
+  const { user } = useAuth();
+  // Only the reports this role may open (the API enforces the same rules).
+  const groups = GROUPS
+    .map((g) => ({ ...g, items: g.items.filter((it) => canSee(user?.role, it.perm)) }))
+    .filter((g) => g.items.length > 0);
   return (
     <div>
       <div className="page-header"><h1><BarChart3 size={22} color="var(--primary)" /> Reports</h1></div>
-      <GroupedTabs groups={GROUPS} />
+      {groups.length === 0 ? <p className="muted">No reports are available for your role.</p> : <GroupedTabs groups={groups} />}
     </div>
   );
 }

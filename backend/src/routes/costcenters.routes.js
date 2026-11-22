@@ -2,13 +2,14 @@ const { Router } = require('express');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { logAudit } = require('../services/auditService');
 
 const router = Router();
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { is_active } = req.query;
   const conditions = [];
   const params = [];
@@ -18,7 +19,7 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM cost_centers WHERE id = $1', [req.params.id]);
   if (!rows[0]) throw new ApiError(404, 'Cost center not found');
   res.json({ data: rows[0], error: null });
@@ -70,7 +71,7 @@ router.put('/:id/deactivate', requireRole('Admin', 'Finance Officer'), asyncHand
 // center, grouped by account type, for the given period — the core "department cost"
 // requirement, computed straight from the GL (the same source of truth every other
 // financial report in this app already uses).
-router.get('/:id/report', asyncHandler(async (req, res) => {
+router.get('/:id/report', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { from, to } = req.query;
   const params = [req.params.id, from || '1900-01-01', to || '2999-12-31'];
   const { rows: cc } = await pool.query('SELECT * FROM cost_centers WHERE id = $1', [req.params.id]);

@@ -2,12 +2,13 @@ const { Router } = require('express');
 const { pool } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 
 const router = Router();
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', requireRole(...PERM.PROCUREMENT_VIEW), asyncHandler(async (req, res) => {
   const { category, search } = req.query;
   const conditions = [];
   const params = [];

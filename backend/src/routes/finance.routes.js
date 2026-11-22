@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { postJournalEntry, getAccountByCode, reverseJournalEntry } = require('../services/accountingService');
@@ -9,12 +10,12 @@ const { logAudit } = require('../services/auditService');
 
 const router = Router();
 
-router.get('/expense-categories', asyncHandler(async (req, res) => {
+router.get('/expense-categories', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM expense_categories ORDER BY name');
   res.json({ data: rows, error: null });
 }));
 
-router.get('/expenses', asyncHandler(async (req, res) => {
+router.get('/expenses', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const { category_id, from, to } = req.query;
   const conditions = [];
   const params = [];
@@ -106,7 +107,7 @@ router.post('/expenses/:id/reverse', requireRole('Admin', 'Finance Officer'), va
   res.json({ data: result, error: null });
 }));
 
-router.get('/revenue-summary', asyncHandler(async (req, res) => {
+router.get('/revenue-summary', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const { from, to } = req.query;
   const params = [from || '1900-01-01', to || '2999-12-31'];
   const { rows: revenueRows } = await pool.query(
@@ -124,7 +125,7 @@ router.get('/revenue-summary', asyncHandler(async (req, res) => {
 
 // Note: uses products.unit_cost as a current-cost approximation. For exact
 // historical margins, snapshot unit_cost onto sales_order_items at order time.
-router.get('/profitability', asyncHandler(async (req, res) => {
+router.get('/profitability', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const { product_id, from, to } = req.query;
   const conditions = ['so.status != \'cancelled\''];
   const params = [];

@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { logAudit } = require('../services/auditService');
@@ -80,7 +81,7 @@ router.put('/:id', requireRole('Admin', 'Sales Manager'), validate(schemas.qaade
 // Qaade performance: route sales, collections (payments made against that route's
 // orders), and outstanding balance, for a given period — the legacy "sales by qaade" /
 // "qaade performance" report combined into one call.
-router.get('/:id/performance', asyncHandler(async (req, res) => {
+router.get('/:id/performance', requireRole(...PERM.FIELD_PERF), asyncHandler(async (req, res) => {
   const { from, to } = req.query;
   const params = [req.params.id, from || '1900-01-01', to || '2999-12-31'];
 

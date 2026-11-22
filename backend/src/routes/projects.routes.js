@@ -2,13 +2,14 @@ const { Router } = require('express');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { logAudit } = require('../services/auditService');
 
 const router = Router();
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { status, customer_id } = req.query;
   const conditions = [];
   const params = [];
@@ -27,7 +28,7 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT p.*, c.name AS customer_name, cc.name AS cost_center_name
      FROM projects p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN cost_centers cc ON cc.id = p.cost_center_id
@@ -86,7 +87,7 @@ router.put('/:id/close', requireRole('Admin', 'Sales Manager', 'Finance Officer'
 // every expense/purchase-order tagged to it, cross-checked against journal_lines.project_id
 // the same dual-path way /reports/accounts-receivable already cross-checks AR — both
 // numbers should always agree since they trace back to the same postings.
-router.get('/:id/profitability', asyncHandler(async (req, res) => {
+router.get('/:id/profitability', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const { from, to } = req.query;
   const params = [req.params.id, from || '1900-01-01', to || '2999-12-31'];
   const { rows: proj } = await pool.query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
