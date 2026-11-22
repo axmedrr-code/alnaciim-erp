@@ -826,6 +826,34 @@ const restoreBackupConfirm = z.object({
   })
 });
 
+// ---- procurement: requisitions ----
+const requisitionLine = z.object({
+  product_id: idOptional,
+  item_name: z.string().trim().min(1, 'Item is required').max(200),
+  description: z.string().max(2000).optional().nullable(),
+  quantity: z.coerce.number().positive('Quantity must be greater than zero'),
+  unit: z.string().trim().min(1, 'Unit is required').max(20),
+  estimated_unit_cost: z.coerce.number().min(0).default(0)
+});
+const requisitionBody = {
+  department_id: idOptional,
+  title: z.string().trim().min(3, 'Title is required').max(200),
+  justification: z.string().trim().min(5, 'Justification is required').max(4000),
+  priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
+  required_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').optional().nullable(),
+  lines: z.array(requisitionLine).min(1, 'At least one line item is required').max(100)
+};
+const requisitionCreate = z.object({ body: z.object({ ...requisitionBody, submit: z.boolean().optional() }) });
+const requisitionUpdate = z.object({ body: z.object(requisitionBody) });
+const requisitionDecision = z.object({
+  body: z.object({
+    decision: z.enum(['approve', 'reject', 'revision']),
+    comments: z.string().trim().max(2000).optional().nullable()
+  })
+});
+const requisitionAssign = z.object({ body: z.object({ assigned_to: id, comments: z.string().trim().max(2000).optional().nullable() }) });
+const requisitionCancel = z.object({ body: z.object({ comments: z.string().trim().max(2000).optional().nullable() }) });
+
 module.exports = {
   login,
   productCreate, productUpdate, categoryCreate,
@@ -848,5 +876,6 @@ module.exports = {
   supplierPaymentCreate, budgetCreate, fiscalYearCreate,
   reverseRequest,
   userCreate, userUpdate,
-  restoreBackupConfirm
+  restoreBackupConfirm,
+  requisitionCreate, requisitionUpdate, requisitionDecision, requisitionAssign, requisitionCancel
 };

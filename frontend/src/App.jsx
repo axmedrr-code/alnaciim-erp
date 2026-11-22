@@ -14,6 +14,7 @@ import FinancePage from './pages/finance/FinancePage';
 import ReportsPage from './pages/reports/ReportsPage';
 import SettingsPage from './pages/settings/SettingsPage';
 import DriverPage from './pages/driver/DriverPage';
+import RequisitionsPage from './pages/procurement/RequisitionsPage';
 
 function Home() {
   const { user } = useAuth();
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="production" element={<ProductionPage />} />
             <Route path="sales" element={<SalesPage />} />
             <Route path="procurement" element={<ProcurementPage />} />
+            <Route path="requisitions" element={<RequisitionsPage />} />
             <Route path="maintenance" element={<MaintenancePage />} />
             <Route path="finance" element={<FinancePage />} />
             <Route path="reports" element={<ReportsPage />} />

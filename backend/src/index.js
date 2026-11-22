@@ -37,6 +37,7 @@ const routeOpsRoutes = require('./routes/routeops.routes');
 const importsRoutes = require('./routes/imports.routes');
 const billingRoutes = require('./routes/billing.routes');
 const retailRoutes = require('./routes/retail.routes');
+const requisitionRoutes = require('./routes/requisitions.routes');
 
 // Fail fast on missing required configuration (names only — values are never logged).
 const missing = ['JWT_SECRET'].concat(isHostedEnv() ? ['DATABASE_URL'] : []).filter((k) => !process.env[k]);
@@ -108,6 +109,7 @@ v1.use('/inventory', inventoryRoutes);
 v1.use('/production', productionRoutes);
 v1.use('/sales', salesRoutes);
 v1.use('/customers', customersRoutes);
+v1.use('/procurement/requisitions', requisitionRoutes);
 v1.use('/procurement', procurementRoutes);
 v1.use('/suppliers', suppliersRoutes);
 v1.use('/maintenance', maintenanceRoutes);

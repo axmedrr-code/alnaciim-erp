@@ -7,14 +7,14 @@ const PERM = {
   // Sales & receivables figures, and the journal entries behind an order.
   SALES_FIN: ['Admin', 'Finance Officer', 'Sales Manager'],
   // Stock quantities/values and movement history.
-  INVENTORY_VIEW: ['Admin', 'Inventory Manager', 'Storekeeper', 'Production Manager', 'Sales Manager', 'Finance Officer'],
+  INVENTORY_VIEW: ['Admin', 'Inventory Manager', 'Storekeeper', 'Production Manager', 'Sales Manager', 'Finance Officer', 'Operation Manager'],
   // Plant/production data.
-  PRODUCTION_VIEW: ['Admin', 'Production Manager', 'Technician', 'Inventory Manager', 'Sales Manager', 'Finance Officer'],
+  PRODUCTION_VIEW: ['Admin', 'Production Manager', 'Technician', 'Inventory Manager', 'Sales Manager', 'Finance Officer', 'Operation Manager'],
   // Machine/production cost and profitability.
   PRODUCTION_COST: ['Admin', 'Production Manager', 'Finance Officer'],
   MAINTENANCE_VIEW: ['Admin', 'Production Manager', 'Technician'],
   // Purchase orders, suppliers, supplier payments.
-  PROCUREMENT_VIEW: ['Admin', 'Procurement Officer', 'Storekeeper', 'Finance Officer', 'Inventory Manager'],
+  PROCUREMENT_VIEW: ['Admin', 'Procurement Officer', 'Storekeeper', 'Finance Officer', 'Inventory Manager', 'Operation Manager'],
   // Driver / collector / fleet performance and fleet costs.
   FIELD_PERF: ['Admin', 'Sales Manager', 'Route Supervisor', 'Supervisor', 'Finance Officer'],
   // Collections: receivables, customer balances, payments list, follow-ups.

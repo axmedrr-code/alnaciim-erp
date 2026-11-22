@@ -683,6 +683,15 @@ INSERT INTO roles (name, description)
 SELECT 'Collector', 'Records payments against assigned customer accounts'
 WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'Collector');
 
+-- Procurement approval chain roles (see migrations/026_procurement_phase1_requisitions.sql).
+INSERT INTO roles (name, description)
+SELECT 'Department Head', 'Reviews purchase requisitions raised by their department'
+WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'Department Head');
+INSERT INTO roles (name, description)
+SELECT 'Operation Manager', 'Approves requisitions and authorizes purchase orders; procurement oversight'
+WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'Operation Manager');
+
+
 -- Each mobile-money wallet gets its own Chart of Accounts row — bank_accounts.coa_account_id
 -- is unique per account, and each wallet is a distinct pool of funds from the main bank account.
 INSERT INTO chart_of_accounts (code, name, account_type) VALUES
