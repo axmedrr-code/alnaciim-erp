@@ -103,7 +103,7 @@ router.get('/:id/profitability', requireRole(...PERM.FINANCE), asyncHandler(asyn
     params
   );
   const { rows: poRows } = await pool.query(
-    `SELECT COALESCE(SUM(total_amount), 0) AS po_cost FROM purchase_orders WHERE project_id = $1 AND status NOT IN ('draft','cancelled','reversed') AND order_date BETWEEN $2 AND $3`,
+    `SELECT COALESCE(SUM(total_amount), 0) AS po_cost FROM purchase_orders WHERE project_id = $1 AND status NOT IN ('draft','pending_authorization','cancelled','reversed') AND order_date BETWEEN $2 AND $3`,
     params
   );
   const { rows: glRows } = await pool.query(
