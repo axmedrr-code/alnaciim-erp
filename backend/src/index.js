@@ -6,6 +6,7 @@ const cron = require('node-cron');
 const { authenticate } = require('./middleware/auth');
 const errorHandler = require('./middleware/errorHandler');
 const backupService = require('./services/backupService');
+const { pool } = require('./config/db');
 
 const authRoutes = require('./routes/auth.routes');
 const productsRoutes = require('./routes/products.routes');
@@ -35,16 +36,44 @@ const importsRoutes = require('./routes/imports.routes');
 const billingRoutes = require('./routes/billing.routes');
 const retailRoutes = require('./routes/retail.routes');
 
+// Fail fast on missing required configuration (names only — values are never logged).
+const missing = ['JWT_SECRET'].concat(isHostedEnv() ? ['DATABASE_URL'] : []).filter((k) => !process.env[k]);
+if (missing.length) {
+  console.error(`Missing required environment variable(s): ${missing.join(', ')} — refusing to start`);
+  process.exit(1);
+}
+function isHostedEnv() { return process.env.NODE_ENV === 'production' || !!process.env.RENDER || !!process.env.RAILWAY_ENVIRONMENT; }
+
 const app = express();
-// Open ('*') by default so local dev / the pos app on a different port keep
-// working unchanged; set CORS_ORIGIN (comma-separated) in production to the
-// deployed frontend URL(s) instead of leaving this wide open.
-app.use(cors({ origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim()) : '*' }));
+// CORS is an exact-match allowlist from CORS_ORIGIN (comma-separated). If it is
+// not set: local dev keeps '*' (so the pos app on another port works unchanged),
+// but a hosted environment (NODE_ENV=production, or Render/Railway) fails CLOSED
+// and allows no cross-origin browser access at all.
+const isHosted = process.env.NODE_ENV === 'production' || !!process.env.RENDER || !!process.env.RAILWAY_ENVIRONMENT;
+const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
+if (!allowedOrigins.length && isHosted) console.error('CORS_ORIGIN is not set — all cross-origin browser requests will be rejected');
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // non-browser clients (curl, server-to-server) send no Origin
+    if (allowedOrigins.length) return cb(null, allowedOrigins.includes(origin));
+    return cb(null, !isHosted);
+  }
+}));
 // Bulk import commits (thousands of rows) round-trip as JSON well past the
 // 100kb default body limit — bumped for that one real use case.
 app.use(express.json({ limit: '20mb' }));
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+// Deeper check: proves the API can actually reach the database (SELECT 1). Never returns connection details.
+app.get('/health/db', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ status: 'ok', db: 'ok' });
+  } catch (err) {
+    console.error('Health DB check failed:', err.code || err.name, err.message);
+    res.status(503).json({ status: 'degraded', db: 'down' });
+  }
+});
 
 const v1 = express.Router();
 v1.use('/auth', authRoutes);
