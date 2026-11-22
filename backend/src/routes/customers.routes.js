@@ -27,12 +27,15 @@ router.get('/', asyncHandler(async (req, res) => {
     // Type-ahead for the POS HNO box: a PARTIAL HNO typed so far (digits, prefix or any part). It only ever
     // matches the HNO itself - never names - and the operator still has to pick one; selecting it runs the
     // normal exact lookup. Wildcards in the input are stripped so it cannot widen the match.
-    const typed = String(hno_like).replace(/[,\s%_\\]/g, '');
+    // Number-based only: just the DIGITS typed are used (letters, '-', wildcards, commas and spaces are ignored), and
+    // only HNOs that end in a number are suggested, so text rows such as "Total Persons" never appear.
+    const typed = String(hno_like).replace(/\D/g, '');
     if (!typed) {
-      conditions.push('FALSE'); // nothing usable typed (e.g. only wildcards) -> no suggestions
+      conditions.push('FALSE'); // no digits typed -> no suggestions
     } else {
       params.push(`%${typed}%`);
       conditions.push(`regexp_replace(c.hno, '[,\\s]', '', 'g') ILIKE $${params.length}`);
+      conditions.push(`regexp_replace(c.hno, '[,\\s]', '', 'g') ~ '[0-9]$'`);
     }
   } else if (search) {
     params.push(`%${search}%`);
