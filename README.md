@@ -50,7 +50,15 @@ backups — run one now, download, restore, delete — from **Settings → Backu
 
 ### 5. Log in
 
-Any seeded user works with password **`Password123!`**, e.g.:
+Seeded users are created **locked** (no default password exists). Set a strong password for the account you need
+(12+ characters; the value is read from the environment, never printed):
+
+```bash
+cd backend
+NEW_PASSWORD='<your strong password>' node src/scripts/set-user-password.js admin@alnaciim.com
+```
+
+Seeded accounts, e.g.:
 
 | Email | Role |
 |---|---|

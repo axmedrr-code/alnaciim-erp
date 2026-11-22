@@ -2,7 +2,9 @@
 -- Alnaciim Water Company — Sample seed data
 -- Run after schema.sql, against a fresh database (relies on SERIAL ids
 -- starting at 1 and being assigned in insertion order below).
--- All sample users share the password: Password123!
+-- Sample users are created LOCKED: their password_hash is a bcrypt hash of a random value that
+-- was discarded, so no password works until an administrator sets one with
+--   node backend/src/scripts/set-user-password.js <email>   (reads NEW_PASSWORD from the environment)
 -- =====================================================================
 
 BEGIN;
@@ -31,21 +33,21 @@ INSERT INTO warehouses (code, name, type, location) VALUES
  ('WH-DEP-01', 'Distribution Depot',       'general',        'City Distribution Depot');
 
 -- ---------------------------------------------------------------------
--- USERS  (password_hash below = bcrypt("Password123!"))
+-- USERS  (locked: hash of a discarded random value — see the note at the top of this file)
 -- ---------------------------------------------------------------------
 INSERT INTO users (employee_code, full_name, email, password_hash, role_id, department, phone, assigned_warehouse_id) VALUES
- ('EMP-001', 'Ahmed Al-Naciim',   'admin@alnaciim.com',       '$2b$10$mFQBawRKb4NptNsE7O7eCeRrga4vXlvNpnPdGmcT3TZNjhtIQ1veG', 1, 'Management',  '+252-61-1000001', NULL),
- ('EMP-002', 'Farah Osman',       'production.mgr@alnaciim.com','$2b$10$mFQBawRKb4NptNsE7O7eCeRrga4vXlvNpnPdGmcT3TZNjhtIQ1veG', 2, 'Production',  '+252-61-1000002', NULL),
- ('EMP-003', 'Hodan Warsame',     'inventory.mgr@alnaciim.com', '$2b$10$mFQBawRKb4NptNsE7O7eCeRrga4vXlvNpnPdGmcT3TZNjhtIQ1veG', 3, 'Logistics',   '+252-61-1000003', NULL),
- ('EMP-004', 'Khalid Nur',        'sales.mgr@alnaciim.com',     '$2b$10$mFQBawRKb4NptNsE7O7eCeRrga4vXlvNpnPdGmcT3TZNjhtIQ1veG', 4, 'Sales',       '+252-61-1000004', NULL),
- ('EMP-005', 'Amina Yusuf',       'finance@alnaciim.com',       '$2b$10$mFQBawRKb4NptNsE7O7eCeRrga4vXlvNpnPdGmcT3TZNjhtIQ1veG', 5, 'Finance',     '+252-61-1000005', NULL),
- ('EMP-006', 'Ismail Hassan',     'storekeeper.rm@alnaciim.com','$2b$10$mFQBawRKb4NptNsE7O7eCeRrga4vXlvNpnPdGmcT3TZNjhtIQ1veG', 6, 'Logistics',   '+252-61-1000006', 1),
- ('EMP-007', 'Sagal Abdi',        'storekeeper.fg@alnaciim.com','$2b$10$mFQBawRKb4NptNsE7O7eCeRrga4vXlvNpnPdGmcT3TZNjhtIQ1veG', 6, 'Logistics',   '+252-61-1000007', 2),
- ('EMP-008', 'Mustafe Ali',       'technician@alnaciim.com',    '$2b$10$mFQBawRKb4NptNsE7O7eCeRrga4vXlvNpnPdGmcT3TZNjhtIQ1veG', 7, 'Technical',   '+252-61-1000008', NULL),
- ('EMP-009', 'Nasra Jama',        'procurement@alnaciim.com',   '$2b$10$mFQBawRKb4NptNsE7O7eCeRrga4vXlvNpnPdGmcT3TZNjhtIQ1veG', 8, 'Finance',     '+252-61-1000009', NULL),
- ('EMP-010', 'Yusuf Dahir',       'driver1@alnaciim.com',       '$2b$10$mFQBawRKb4NptNsE7O7eCeRrga4vXlvNpnPdGmcT3TZNjhtIQ1veG', 9, 'Logistics',   '+252-61-1000010', NULL),
- ('EMP-011', 'Deeqa Mohamed',     'driver2@alnaciim.com',       '$2b$10$mFQBawRKb4NptNsE7O7eCeRrga4vXlvNpnPdGmcT3TZNjhtIQ1veG', 9, 'Logistics',   '+252-61-1000011', NULL),
- ('EMP-012', 'Cabdirisaaq Nuur',  'sales.rep1@alnaciim.com',    '$2b$10$mFQBawRKb4NptNsE7O7eCeRrga4vXlvNpnPdGmcT3TZNjhtIQ1veG', 4, 'Sales',       '+252-61-1000012', NULL);
+ ('EMP-001', 'Ahmed Al-Naciim',   'admin@alnaciim.com',       '$2a$10$M2ucw4YkGVwKiKRvxxF5Oe95.XVtyXGcjqeyXM.oSpw.gHdHy0uH.', 1, 'Management',  '+252-61-1000001', NULL),
+ ('EMP-002', 'Farah Osman',       'production.mgr@alnaciim.com','$2a$10$M2ucw4YkGVwKiKRvxxF5Oe95.XVtyXGcjqeyXM.oSpw.gHdHy0uH.', 2, 'Production',  '+252-61-1000002', NULL),
+ ('EMP-003', 'Hodan Warsame',     'inventory.mgr@alnaciim.com', '$2a$10$M2ucw4YkGVwKiKRvxxF5Oe95.XVtyXGcjqeyXM.oSpw.gHdHy0uH.', 3, 'Logistics',   '+252-61-1000003', NULL),
+ ('EMP-004', 'Khalid Nur',        'sales.mgr@alnaciim.com',     '$2a$10$M2ucw4YkGVwKiKRvxxF5Oe95.XVtyXGcjqeyXM.oSpw.gHdHy0uH.', 4, 'Sales',       '+252-61-1000004', NULL),
+ ('EMP-005', 'Amina Yusuf',       'finance@alnaciim.com',       '$2a$10$M2ucw4YkGVwKiKRvxxF5Oe95.XVtyXGcjqeyXM.oSpw.gHdHy0uH.', 5, 'Finance',     '+252-61-1000005', NULL),
+ ('EMP-006', 'Ismail Hassan',     'storekeeper.rm@alnaciim.com','$2a$10$M2ucw4YkGVwKiKRvxxF5Oe95.XVtyXGcjqeyXM.oSpw.gHdHy0uH.', 6, 'Logistics',   '+252-61-1000006', 1),
+ ('EMP-007', 'Sagal Abdi',        'storekeeper.fg@alnaciim.com','$2a$10$M2ucw4YkGVwKiKRvxxF5Oe95.XVtyXGcjqeyXM.oSpw.gHdHy0uH.', 6, 'Logistics',   '+252-61-1000007', 2),
+ ('EMP-008', 'Mustafe Ali',       'technician@alnaciim.com',    '$2a$10$M2ucw4YkGVwKiKRvxxF5Oe95.XVtyXGcjqeyXM.oSpw.gHdHy0uH.', 7, 'Technical',   '+252-61-1000008', NULL),
+ ('EMP-009', 'Nasra Jama',        'procurement@alnaciim.com',   '$2a$10$M2ucw4YkGVwKiKRvxxF5Oe95.XVtyXGcjqeyXM.oSpw.gHdHy0uH.', 8, 'Finance',     '+252-61-1000009', NULL),
+ ('EMP-010', 'Yusuf Dahir',       'driver1@alnaciim.com',       '$2a$10$M2ucw4YkGVwKiKRvxxF5Oe95.XVtyXGcjqeyXM.oSpw.gHdHy0uH.', 9, 'Logistics',   '+252-61-1000010', NULL),
+ ('EMP-011', 'Deeqa Mohamed',     'driver2@alnaciim.com',       '$2a$10$M2ucw4YkGVwKiKRvxxF5Oe95.XVtyXGcjqeyXM.oSpw.gHdHy0uH.', 9, 'Logistics',   '+252-61-1000011', NULL),
+ ('EMP-012', 'Cabdirisaaq Nuur',  'sales.rep1@alnaciim.com',    '$2a$10$M2ucw4YkGVwKiKRvxxF5Oe95.XVtyXGcjqeyXM.oSpw.gHdHy0uH.', 4, 'Sales',       '+252-61-1000012', NULL);
 
 UPDATE warehouses SET manager_id = 3 WHERE code IN ('WH-RM-01','WH-FG-01','WH-SP-01');
 UPDATE warehouses SET manager_id = 4 WHERE code = 'WH-DEP-01';

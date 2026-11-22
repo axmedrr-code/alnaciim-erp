@@ -6,10 +6,11 @@ const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { authenticate } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
+const { loginAccountLimiter, loginIpLimiter } = require('../middleware/rateLimit');
 
 const router = Router();
 
-router.post('/login', validate(schemas.login), asyncHandler(async (req, res) => {
+router.post('/login', loginIpLimiter, loginAccountLimiter, validate(schemas.login), asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
   const { rows } = await pool.query(
