@@ -3,6 +3,7 @@ import { ClipboardList, Plus, X, Paperclip, Send, Check, RotateCcw, Ban } from '
 import { useApi } from '../../components/useApi';
 import client from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import SourcingPanel from './SourcingPanel';
 
 const STATUS_LABEL = {
   draft: 'Draft', submitted: 'Waiting for Department Head', returned_for_revision: 'Returned for revision',
@@ -13,8 +14,8 @@ const STATUS_BADGE = {
   draft: 'info', submitted: 'pending', returned_for_revision: 'pending', rejected: 'cancelled', dept_approved: 'pending',
   approved: 'ok', sourcing: 'info', po_issued: 'info', fulfilled: 'ok', closed: 'ok', cancelled: 'cancelled'
 };
-const STEP_LABEL = { submission: 'Submission', dept_review: 'Department review', ops_approval: 'Operation Manager approval', assignment: 'Assignment' };
-const DECISION_LABEL = { submitted: 'Submitted', approved: 'Approved', rejected: 'Rejected', revision_requested: 'Revision requested', assigned: 'Assigned', cancelled: 'Cancelled' };
+const STEP_LABEL = { submission: 'Submission', dept_review: 'Department review', ops_approval: 'Operation Manager approval', assignment: 'Assignment', supplier_selection: 'Supplier selection', po_submission: 'PO submission', po_authorization: 'PO authorization' };
+const DECISION_LABEL = { submitted: 'Submitted', approved: 'Approved', rejected: 'Rejected', revision_requested: 'Revision requested', assigned: 'Assigned', authorized: 'Authorized', cancelled: 'Cancelled' };
 const money = (v) => `$${Number(v || 0).toFixed(2)}`;
 const day = (v) => (v ? String(v).slice(0, 10) : '—');
 const stamp = (v) => (v ? new Date(v).toLocaleString() : '');
@@ -181,6 +182,8 @@ function RequisitionDetail({ id, onBack, onEdit }) {
               <td>{x.actor_name} <span className="muted">({x.actor_role})</span></td><td>{x.comments || ''}</td><td title={x.signature_hash}><code>{x.signature_hash?.slice(0, 12)}…</code></td></tr>))}</tbody>
         </table>
       )}
+
+      {['sourcing', 'po_issued'].includes(pr.status) && <SourcingPanel requisition={pr} onChanged={() => setVersion((x) => x + 1)} />}
 
       <h4 style={{ margin: '18px 0 8px' }}>Attachments</h4>
       {pr.attachments.length === 0 ? <p className="muted">None.</p> : (
