@@ -1,3 +1,5 @@
+const { requireRole } = require('../middleware/auth');
+const { PERM, canSee } = require('../middleware/permissions');
 const { Router } = require('express');
 const { pool } = require('../config/db');
 const { asyncHandler } = require('../utils/asyncHandler');
@@ -13,7 +15,7 @@ const router = Router();
 
 // Cash Summary — cash-in by payment method plus the cash/credit sales split,
 // for a date range (defaults to today).
-router.get('/cash-summary', asyncHandler(async (req, res) => {
+router.get('/cash-summary', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const from = req.query.from || new Date().toISOString().slice(0, 10);
   const to = req.query.to || new Date().toISOString().slice(0, 10);
 
@@ -50,7 +52,7 @@ router.get('/cash-summary', asyncHandler(async (req, res) => {
 // Debtors Report — every customer with an open/outstanding balance, oldest unpaid
 // invoice date, and days overdue against their payment terms. The core "open
 // balance" view carried over from the legacy debtor-tracking workflow.
-router.get('/debtors', asyncHandler(async (req, res) => {
+router.get('/debtors', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { qaade_id } = req.query;
   const params = [];
   let qaadeFilter = '';
@@ -88,7 +90,7 @@ router.get('/debtors', asyncHandler(async (req, res) => {
 
 // Sales by Qaade — cross-route comparison (see also GET /qaades/:id/performance
 // for a single route's detail).
-router.get('/sales-by-qaade', asyncHandler(async (req, res) => {
+router.get('/sales-by-qaade', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const from = req.query.from || '1900-01-01';
   const to = req.query.to || '2999-12-31';
 
@@ -108,7 +110,7 @@ router.get('/sales-by-qaade', asyncHandler(async (req, res) => {
 }));
 
 // Sales by Customer
-router.get('/sales-by-customer', asyncHandler(async (req, res) => {
+router.get('/sales-by-customer', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const from = req.query.from || '1900-01-01';
   const to = req.query.to || '2999-12-31';
 
@@ -127,7 +129,7 @@ router.get('/sales-by-customer', asyncHandler(async (req, res) => {
 
 // Expenses Report — summarized by category for a period (see /finance/expenses for
 // the raw filterable ledger).
-router.get('/expenses-summary', asyncHandler(async (req, res) => {
+router.get('/expenses-summary', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const from = req.query.from || '1900-01-01';
   const to = req.query.to || '2999-12-31';
 
@@ -145,7 +147,7 @@ router.get('/expenses-summary', asyncHandler(async (req, res) => {
 // Bulk-water-specific KPIs for the tanker distribution business: today's volume
 // delivered, deliveries completed, tanker utilization, top customers by liters,
 // unpaid balances, and per-driver route performance for today.
-router.get('/water-dashboard', asyncHandler(async (req, res) => {
+router.get('/water-dashboard', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async (req, res) => {
   const [soldToday, deliveriesToday, utilization, topCustomers, unpaid, routePerformance] = await Promise.all([
     // Two delivery flows exist side by side: the older driver-confirmed
     // `deliveries` table, and the fast POS's tank-dispatch (which settles
@@ -245,7 +247,7 @@ router.get('/water-dashboard', asyncHandler(async (req, res) => {
 // every tank-fill sale the fast POS has recorded against that driver's route
 // runs (route_stops/sales_orders — the live path every POS Save writes to,
 // not a separately-synced snapshot). Defaults to the last 30 days.
-router.get('/driver-performance', asyncHandler(async (req, res) => {
+router.get('/driver-performance', requireRole(...PERM.FIELD_PERF), asyncHandler(async (req, res) => {
   const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
   const { rows } = await pool.query(
     `SELECT u.full_name AS driver_name, t.plate_number,
@@ -268,7 +270,7 @@ router.get('/driver-performance', asyncHandler(async (req, res) => {
 
 // Daily revenue (from payments) vs cost (from expenses) for the last N days,
 // zero-filled so charts don't show gaps on days with no activity.
-router.get('/revenue-trend', asyncHandler(async (req, res) => {
+router.get('/revenue-trend', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
   const { rows } = await pool.query(
     `WITH days AS (
@@ -293,7 +295,7 @@ router.get('/revenue-trend', asyncHandler(async (req, res) => {
 }));
 
 // Daily completed production output by type for the last N days, zero-filled.
-router.get('/production-trend', asyncHandler(async (req, res) => {
+router.get('/production-trend', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async (req, res) => {
   const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
   const { rows } = await pool.query(
     `WITH days AS (
@@ -312,7 +314,7 @@ router.get('/production-trend', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/inventory', asyncHandler(async (req, res) => {
+router.get('/inventory', requireRole(...PERM.INVENTORY_VIEW), asyncHandler(async (req, res) => {
   const { warehouse_id } = req.query;
   const params = [];
   let where = '';
@@ -331,7 +333,7 @@ router.get('/inventory', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/production', asyncHandler(async (req, res) => {
+router.get('/production', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async (req, res) => {
   const { year, month, production_type } = req.query;
   const conditions = [];
   const params = [];
@@ -351,7 +353,7 @@ router.get('/production', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/sales', asyncHandler(async (req, res) => {
+router.get('/sales', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { from, to } = req.query;
   const params = [from || '1900-01-01', to || '2999-12-31'];
   const { rows } = await pool.query(
@@ -370,7 +372,7 @@ router.get('/sales', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/stock-movements', asyncHandler(async (req, res) => {
+router.get('/stock-movements', requireRole(...PERM.INVENTORY_VIEW), asyncHandler(async (req, res) => {
   const { product_id, warehouse_id, from, to } = req.query;
   const conditions = [];
   const params = [];
@@ -411,16 +413,20 @@ router.get('/dashboard-summary', asyncHandler(async (req, res) => {
     pool.query(`SELECT COALESCE(SUM(total_amount), 0) AS outstanding FROM sales_orders WHERE payment_status != 'paid' AND status NOT IN ('cancelled','reversed')`)
   ]);
 
+  // Every signed-in role may call this (the header bell and home page use it), but each section is
+  // returned only if the caller's role may see that kind of data; the rest are null.
+  const role = req.user.role;
+  const only = (group, value) => (canSee(role, group) ? value : null);
   res.json({
     data: {
-      production_today: production.rows,
-      low_stock_count: Number(lowStock.rows[0].count),
-      sales_today: salesToday.rows[0],
-      revenue_vs_cost_mtd: revenueVsCost.rows[0],
-      downtime_last_7_days: downtime.rows,
-      pending_deliveries: deliveries.rows,
-      maintenance_due_count: Number(maintenanceDue.rows[0].count),
-      outstanding_receivables: Number(receivables.rows[0].outstanding)
+      production_today: only('PRODUCTION_VIEW', production.rows),
+      low_stock_count: only('INVENTORY_VIEW', Number(lowStock.rows[0].count)),
+      sales_today: only('SALES_FIN', salesToday.rows[0]),
+      revenue_vs_cost_mtd: only('FINANCE', revenueVsCost.rows[0]),
+      downtime_last_7_days: only('PRODUCTION_VIEW', downtime.rows),
+      pending_deliveries: only('FIELD_PERF', deliveries.rows),
+      maintenance_due_count: only('MAINTENANCE_VIEW', Number(maintenanceDue.rows[0].count)),
+      outstanding_receivables: only('SALES_FIN', Number(receivables.rows[0].outstanding))
     },
     error: null
   });
@@ -437,7 +443,7 @@ function normalBalance(accountType, debit, credit) {
 }
 
 // General Ledger — every posted line for one account, in date order, with a running balance.
-router.get('/general-ledger', asyncHandler(async (req, res) => {
+router.get('/general-ledger', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const { account_id, from, to } = req.query;
   if (!account_id) return res.json({ data: null, error: 'account_id is required' });
 
@@ -473,7 +479,7 @@ router.get('/general-ledger', asyncHandler(async (req, res) => {
 
 // Trial Balance — every account's period activity and balance; total debits must equal
 // total credits (the fundamental double-entry check).
-router.get('/trial-balance', asyncHandler(async (req, res) => {
+router.get('/trial-balance', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const asOf = req.query.as_of || '2999-12-31';
   const { rows } = await pool.query(
     `SELECT a.id, a.code, a.name, a.account_type,
@@ -509,7 +515,7 @@ router.get('/trial-balance', asyncHandler(async (req, res) => {
 }));
 
 // Profit & Loss (Income Statement) for a period.
-router.get('/profit-loss', asyncHandler(async (req, res) => {
+router.get('/profit-loss', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const from = req.query.from || '1900-01-01';
   const to = req.query.to || '2999-12-31';
 
@@ -538,7 +544,7 @@ router.get('/profit-loss', asyncHandler(async (req, res) => {
 // Balance Sheet as of a date — Assets = Liabilities + Equity, with current-period net
 // income (revenue - expenses since the books began) folded into equity as "Current
 // Year Earnings" so the sheet balances even mid-year, before a formal year closing.
-router.get('/balance-sheet', asyncHandler(async (req, res) => {
+router.get('/balance-sheet', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const asOf = req.query.as_of || new Date().toISOString().slice(0, 10);
 
   const { rows } = await pool.query(
@@ -577,7 +583,7 @@ router.get('/balance-sheet', asyncHandler(async (req, res) => {
 
 // Cash Flow — simplified direct method: every posting that touches a Cash/Bank
 // account, grouped by the business activity (reference_type) that caused it.
-router.get('/cash-flow', asyncHandler(async (req, res) => {
+router.get('/cash-flow', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const from = req.query.from || '1900-01-01';
   const to = req.query.to || '2999-12-31';
 
@@ -607,7 +613,7 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
 // Accounts Receivable subledger — outstanding balance per customer, from the AR GL
 // account itself (independent cross-check against /reports/debtors, which is derived
 // from sales_orders/payments directly).
-router.get('/accounts-receivable', asyncHandler(async (req, res) => {
+router.get('/accounts-receivable', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT c.id, c.hno, c.name, COALESCE(SUM(jl.debit - jl.credit), 0) AS balance
      FROM journal_lines jl
@@ -622,7 +628,7 @@ router.get('/accounts-receivable', asyncHandler(async (req, res) => {
 }));
 
 // Accounts Payable subledger — outstanding balance per supplier.
-router.get('/accounts-payable', asyncHandler(async (req, res) => {
+router.get('/accounts-payable', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT s.id, s.code, s.name, COALESCE(SUM(jl.credit - jl.debit), 0) AS balance
      FROM journal_lines jl

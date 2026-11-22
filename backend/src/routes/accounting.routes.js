@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { postJournalEntry, getAccountByCode, reverseJournalEntry, promoteToPosted } = require('../services/accountingService');
@@ -12,7 +13,7 @@ const router = Router();
 const FINANCE_ROLES = ['Admin', 'Finance Officer'];
 
 // ---- Chart of Accounts ----
-router.get('/chart-of-accounts', asyncHandler(async (req, res) => {
+router.get('/chart-of-accounts', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   // Only POSTED activity counts toward a balance — a LEFT JOIN with the status filter in
   // its ON clause would still leave jl.debit/jl.credit non-null for draft/void entries
   // (only the je.* columns get nulled), so the status filter must live in the subquery
@@ -61,7 +62,7 @@ router.put('/chart-of-accounts/:id', requireRole(...FINANCE_ROLES), validate(sch
 }));
 
 // ---- Journal Entries (manual) ----
-router.get('/journal-entries', asyncHandler(async (req, res) => {
+router.get('/journal-entries', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { from, to, reference_type, reference_id, status } = req.query;
   const conditions = [];
   const params = [];
@@ -82,7 +83,7 @@ router.get('/journal-entries', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/journal-entries/:id', asyncHandler(async (req, res) => {
+router.get('/journal-entries/:id', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT je.*, u.full_name AS created_by_name,
             (SELECT entry_number FROM journal_entries r WHERE r.reverses_entry_id = je.id) AS reversed_by_entry_number
@@ -230,7 +231,7 @@ async function resolveCashOrBankAccount(client, bankAccountId) {
 }
 
 // ---- Bank Accounts ----
-router.get('/bank-accounts', asyncHandler(async (req, res) => {
+router.get('/bank-accounts', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT b.*, a.code AS account_code,
             b.opening_balance + COALESCE((
@@ -260,7 +261,7 @@ router.post('/bank-accounts', requireRole(...FINANCE_ROLES), validate(schemas.ba
 }));
 
 // ---- Budgets ----
-router.get('/budgets', asyncHandler(async (req, res) => {
+router.get('/budgets', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const { fiscal_year_id } = req.query;
   const conditions = [];
   const params = [];
@@ -296,7 +297,7 @@ router.post('/budgets', requireRole(...FINANCE_ROLES), validate(schemas.budgetCr
 }));
 
 // ---- Fiscal Years / Year Closing ----
-router.get('/fiscal-years', asyncHandler(async (req, res) => {
+router.get('/fiscal-years', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM fiscal_years ORDER BY start_date DESC');
   res.json({ data: rows, error: null });
 }));

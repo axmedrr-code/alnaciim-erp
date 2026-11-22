@@ -8,6 +8,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import QuickSearch from './QuickSearch';
+import { REPORT_ROLES } from '../utils/permissions';
 import NotificationsBell from './NotificationsBell';
 import UserMenu from './UserMenu';
 
@@ -19,7 +20,7 @@ const NAV_ITEMS = [
   { to: '/procurement', label: 'Procurement', icon: ShoppingCart, roles: ['Admin', 'Procurement Officer', 'Storekeeper'] },
   { to: '/maintenance', label: 'Maintenance', icon: Wrench, roles: ['Admin', 'Production Manager', 'Technician'] },
   { to: '/finance', label: 'Finance', icon: Landmark, roles: ['Admin', 'Finance Officer'] },
-  { to: '/reports', label: 'Reports', icon: BarChart3, roles: null },
+  { to: '/reports', label: 'Reports', icon: BarChart3, roles: REPORT_ROLES },
   { to: '/settings', label: 'Settings', icon: SettingsIcon, roles: ['Admin'] }
 ];
 

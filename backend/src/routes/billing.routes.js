@@ -10,6 +10,7 @@ const { Router } = require('express');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { nextHno } = require('../services/hnoService');
 const { logAudit } = require('../services/auditService');
 const { postJournalEntry, getAccountByCode } = require('../services/accountingService');
@@ -84,13 +85,13 @@ function resolveDeptParam(req, params) {
   return params.length;
 }
 
-router.get('/departments', asyncHandler(async (req, res) => {
+router.get('/departments', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
   res.json({ data: [{ key: 'all', label: 'All' }, ...DEPARTMENTS.map((d) => ({ key: d.key, label: d.label }))], error: null });
 }));
 
 // Lightweight staff pickers for the Receivables filters — /users itself is
 // Admin-only, but every role here needs to filter by collector/driver.
-router.get('/collectors', asyncHandler(async (req, res) => {
+router.get('/collectors', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT u.id, u.full_name FROM users u JOIN roles r ON r.id = u.role_id
      WHERE r.name = 'Collector' AND u.is_active = true ORDER BY u.full_name`
@@ -98,7 +99,7 @@ router.get('/collectors', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/drivers', asyncHandler(async (req, res) => {
+router.get('/drivers', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT u.id, u.full_name FROM users u JOIN roles r ON r.id = u.role_id
      WHERE r.name = 'Driver' AND u.is_active = true ORDER BY u.full_name`
@@ -109,7 +110,7 @@ router.get('/drivers', asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------------
 // 1. Collection Dashboard
 // ---------------------------------------------------------------------
-router.get('/dashboard', asyncHandler(async (req, res) => {
+router.get('/dashboard', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
   const p1 = []; const idx1 = resolveDeptParam(req, p1);
   const p2 = []; const idx2 = resolveDeptParam(req, p2);
   const p3 = []; const idx3 = resolveDeptParam(req, p3);
@@ -217,7 +218,7 @@ router.get('/dashboard', asyncHandler(async (req, res) => {
 // Overdue > 30 days, no payment for 60 days, no water for X days, and large
 // balances — every figure here is a live query, never a cached/precomputed
 // alert row, so it can never go stale.
-router.get('/alerts', asyncHandler(async (req, res) => {
+router.get('/alerts', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
   const noWaterDays = Number(req.query.no_water_days) || 30;
   const largeBalanceThreshold = Number(req.query.large_balance) || 500;
   const deptKey = req.query.department && req.query.department !== 'all' ? req.query.department : null;
@@ -294,7 +295,7 @@ router.get('/alerts', asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------------
 // 2. Customer Receivables
 // ---------------------------------------------------------------------
-router.get('/receivables', asyncHandler(async (req, res) => {
+router.get('/receivables', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
   const { search, area, collector_id, driver_id, outstanding_only, overdue_only, no_water_days, status } = req.query;
   const conditions = [];
   const params = [];
@@ -357,7 +358,7 @@ router.get('/receivables', asyncHandler(async (req, res) => {
 // second, customer-level ledger, so a customer's balance is always still
 // exactly total_amount - SUM(payments) per order, summed.
 // ---------------------------------------------------------------------
-router.get('/customers/search', asyncHandler(async (req, res) => {
+router.get('/customers/search', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
   const { q } = req.query;
   if (!q) throw new ApiError(400, 'q is required');
   const params = [q, `%${q}%`];
@@ -497,7 +498,7 @@ router.put('/payments/:id', requireRole(...EDIT_PAYMENT_ROLES), asyncHandler(asy
 // ---------------------------------------------------------------------
 // 4. Payment History
 // ---------------------------------------------------------------------
-router.get('/payments', asyncHandler(async (req, res) => {
+router.get('/payments', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
   const { date_from, date_to, collector_id, customer_id, method } = req.query;
   const conditions = ['p.voided_at IS NULL'];
   const params = [];
@@ -530,7 +531,7 @@ router.get('/payments', asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------------
 // 5. Employee Collection Performance
 // ---------------------------------------------------------------------
-router.get('/employee-performance', asyncHandler(async (req, res) => {
+router.get('/employee-performance', requireRole(...PERM.FIELD_PERF), asyncHandler(async (req, res) => {
   const params = [];
   const deptIdx = resolveDeptParam(req, params);
   const paymentDeptFilter = deptIdx ? `AND ${deptFractionSql('so', deptIdx)} > 0` : '';
@@ -584,7 +585,7 @@ router.get('/employee-performance', asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------------
 // 6. Driver Accountability
 // ---------------------------------------------------------------------
-router.get('/driver-accountability', asyncHandler(async (req, res) => {
+router.get('/driver-accountability', requireRole(...PERM.FIELD_PERF), asyncHandler(async (req, res) => {
   const params = [];
   const deptIdx = resolveDeptParam(req, params);
   const saleAmount = deptScoped('so.total_amount', 'so', deptIdx);
@@ -614,7 +615,7 @@ router.get('/driver-accountability', asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------------
 // 7. Aging Report
 // ---------------------------------------------------------------------
-router.get('/aging', asyncHandler(async (req, res) => {
+router.get('/aging', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
   const params = [];
   const deptIdx = resolveDeptParam(req, params);
   const { rows } = await pool.query(
@@ -646,7 +647,7 @@ router.get('/aging', asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------------
 // 8. Customer Profile
 // ---------------------------------------------------------------------
-router.get('/customers/:id/profile', asyncHandler(async (req, res) => {
+router.get('/customers/:id/profile', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
   const { rows: custRows } = await pool.query(
     `SELECT c.*, collector.full_name AS collector_name FROM customers c LEFT JOIN users collector ON collector.id = c.collector_id WHERE c.id = $1`,
     [req.params.id]
@@ -700,7 +701,7 @@ router.get('/customers/:id/profile', asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------------
 // 9. Follow-Up
 // ---------------------------------------------------------------------
-router.get('/customers/:id/follow-ups', asyncHandler(async (req, res) => {
+router.get('/customers/:id/follow-ups', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT f.*, u.full_name AS created_by_name FROM follow_ups f JOIN users u ON u.id = f.created_by
      WHERE f.customer_id = $1 ORDER BY f.created_at DESC`,
@@ -709,7 +710,7 @@ router.get('/customers/:id/follow-ups', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.post('/customers/:id/follow-ups', asyncHandler(async (req, res) => {
+router.post('/customers/:id/follow-ups', requireRole('Admin', 'Finance Officer', 'Collector', 'Sales Manager'), asyncHandler(async (req, res) => {
   const { action_type, notes, promise_amount, promise_date, next_followup_date } = req.body;
   if (!action_type) throw new ApiError(400, 'action_type is required');
   const { rows } = await pool.query(
@@ -722,7 +723,7 @@ router.post('/customers/:id/follow-ups', asyncHandler(async (req, res) => {
 
 // Reminders due today or overdue, across every customer — the follow-up
 // worklist a collector opens their day with.
-router.get('/follow-ups/due', asyncHandler(async (req, res) => {
+router.get('/follow-ups/due', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT f.*, c.name AS customer_name, c.hno, c.phone FROM follow_ups f
      JOIN customers c ON c.id = f.customer_id

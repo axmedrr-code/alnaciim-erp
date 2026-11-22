@@ -8,6 +8,8 @@ import {
   TrendingDown, Truck, Wrench, Users, Wallet, Package, Receipt
 } from 'lucide-react';
 import { useApi } from '../components/useApi';
+import { useAuth } from '../context/AuthContext';
+import { canSee, REPORT_ROLES } from '../utils/permissions';
 import Table from '../components/Table';
 import DateFilterBar, { defaultDateRange } from '../components/DateFilterBar';
 import { daysBetween } from '../utils/dateRanges';
@@ -220,17 +222,46 @@ function InventoryAlertsCard() {
   );
 }
 
+// Roles without any report/executive data get a simple landing page (their work lives in the menu / POS app).
+function WelcomeHome({ user }) {
+  return (
+    <div>
+      <div className="page-header"><h1><LayoutDashboard size={22} color="var(--primary)" /> Welcome</h1></div>
+      <div className="card">
+        <h3>{user?.fullName}</h3>
+        <p className="muted">Signed in as <strong>{user?.role}</strong>. Use the menu on the left for the areas you work in.
+        Company-wide figures are shown only to roles that need them.</p>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
-  const { rows: summary } = useApi('/reports/dashboard-summary');
+  const { user } = useAuth();
+  const role = user?.role;
+  const { rows: summary } = useApi(REPORT_ROLES.includes(role) ? '/reports/dashboard-summary' : null);
   const [dateRange, setDateRange] = useState(defaultDateRange());
 
+  if (!REPORT_ROLES.includes(role)) return <WelcomeHome user={user} />;
   if (!summary) return <p className="muted">Loading dashboard…</p>;
 
-  const revenueMtd = Number(summary.revenue_vs_cost_mtd.revenue_mtd);
-  const costMtd = Number(summary.revenue_vs_cost_mtd.cost_mtd);
+  // The server already returns null for any section this role may not see; hide those cards.
+  const has = (v) => v !== null && v !== undefined;
+  const revenueMtd = has(summary.revenue_vs_cost_mtd) ? Number(summary.revenue_vs_cost_mtd.revenue_mtd) : 0;
+  const costMtd = has(summary.revenue_vs_cost_mtd) ? Number(summary.revenue_vs_cost_mtd.cost_mtd) : 0;
   const profitMtd = revenueMtd - costMtd;
-  const productionToday = summary.production_today.reduce((acc, p) => ({ ...acc, [p.production_type]: p.total }), {});
-  const pendingDeliveries = summary.pending_deliveries.reduce((sum, d) => sum + Number(d.count), 0);
+  const productionToday = (summary.production_today || []).reduce((acc, p) => ({ ...acc, [p.production_type]: p.total }), {});
+  const pendingDeliveries = (summary.pending_deliveries || []).reduce((sum, d) => sum + Number(d.count), 0);
+  const charts = [
+    canSee(role, 'FINANCE') && (
+      <div className="card" key="rev"><h3>Revenue vs Cost — {dateRange.label}</h3><RevenueCostChart dateRange={dateRange} /></div>),
+    canSee(role, 'PRODUCTION_VIEW') && (
+      <div className="card" key="prod"><h3>Production Output — {dateRange.label}</h3><ProductionTrendChart dateRange={dateRange} /></div>),
+    canSee(role, 'SALES_FIN') && (
+      <div className="card" key="top"><h3>Top Products by Revenue — {dateRange.label}</h3><TopProductsChart dateRange={dateRange} /></div>),
+    canSee(role, 'INVENTORY_VIEW') && (
+      <div className="card" key="stock"><h3>Stock Value by Warehouse</h3><StockValueByWarehouseChart /></div>)
+  ].filter(Boolean);
 
   return (
     <div>
@@ -240,55 +271,42 @@ export default function Dashboard() {
       </div>
 
       <div className="kpi-grid">
-        <KpiCard icon={Droplets} tone="info" label="RO Water Today" value={`${productionToday.RO_WATER || 0} m³`} />
-        <KpiCard icon={Snowflake} tone="accent" label="Ice Produced Today" value={`${productionToday.ICE || 0} kg`} />
-        <KpiCard icon={AlertTriangle} tone={summary.low_stock_count > 0 ? 'danger' : 'success'} label="Low Stock Alerts" value={summary.low_stock_count} />
-        <KpiCard icon={TrendingUp} tone="success" label="Sales Today" value={money(summary.sales_today.revenue)} sub={`${summary.sales_today.order_count} orders`} />
-        <KpiCard
-          icon={profitMtd >= 0 ? TrendingUp : TrendingDown} tone={profitMtd >= 0 ? 'success' : 'danger'}
-          label="Revenue vs Cost (MTD)" value={money(revenueMtd)} sub={`Cost: ${money(costMtd)} · Profit: ${money(profitMtd)}`}
-        />
-        <KpiCard icon={Truck} tone="info" label="Pending Deliveries" value={pendingDeliveries} />
-        <KpiCard icon={Wrench} tone="warning" label="Maintenance Due (7 days)" value={summary.maintenance_due_count} />
-        <KpiCard icon={DollarSign} tone="danger" label="Outstanding Receivables" value={money(summary.outstanding_receivables)} />
-      </div>
-
-      <div className="chart-grid">
-        <div className="card">
-          <h3>Revenue vs Cost — {dateRange.label}</h3>
-          <RevenueCostChart dateRange={dateRange} />
-        </div>
-        <div className="card">
-          <h3>Production Output — {dateRange.label}</h3>
-          <ProductionTrendChart dateRange={dateRange} />
-        </div>
-        <div className="card">
-          <h3>Top Products by Revenue — {dateRange.label}</h3>
-          <TopProductsChart dateRange={dateRange} />
-        </div>
-        <div className="card">
-          <h3>Stock Value by Warehouse</h3>
-          <StockValueByWarehouseChart />
-        </div>
-      </div>
-
-      <div className="chart-grid">
-        <RecentTransactionsCard />
-        <TopCustomersCard />
-        <OutstandingReceivablesCard />
-        <CashPositionCard />
-        <InventoryAlertsCard />
-        <div className="card">
-          <div className="card__header"><h3><Package size={16} /> Machine Downtime — Last 7 Days</h3></div>
-          <Table
-            columns={[
-              { key: 'machine_name', header: 'Machine' },
-              { key: 'hours_down', header: 'Hours Down', render: (r) => Number(r.hours_down).toFixed(1) }
-            ]}
-            rows={summary.downtime_last_7_days}
-            emptyText="No downtime recorded in the last 7 days."
+        {has(summary.production_today) && <KpiCard icon={Droplets} tone="info" label="RO Water Today" value={`${productionToday.RO_WATER || 0} m³`} />}
+        {has(summary.production_today) && <KpiCard icon={Snowflake} tone="accent" label="Ice Produced Today" value={`${productionToday.ICE || 0} kg`} />}
+        {has(summary.low_stock_count) && <KpiCard icon={AlertTriangle} tone={summary.low_stock_count > 0 ? 'danger' : 'success'} label="Low Stock Alerts" value={summary.low_stock_count} />}
+        {has(summary.sales_today) && <KpiCard icon={TrendingUp} tone="success" label="Sales Today" value={money(summary.sales_today.revenue)} sub={`${summary.sales_today.order_count} orders`} />}
+        {has(summary.revenue_vs_cost_mtd) && (
+          <KpiCard
+            icon={profitMtd >= 0 ? TrendingUp : TrendingDown} tone={profitMtd >= 0 ? 'success' : 'danger'}
+            label="Revenue vs Cost (MTD)" value={money(revenueMtd)} sub={`Cost: ${money(costMtd)} · Profit: ${money(profitMtd)}`}
           />
-        </div>
+        )}
+        {has(summary.pending_deliveries) && <KpiCard icon={Truck} tone="info" label="Pending Deliveries" value={pendingDeliveries} />}
+        {has(summary.maintenance_due_count) && <KpiCard icon={Wrench} tone="warning" label="Maintenance Due (7 days)" value={summary.maintenance_due_count} />}
+        {has(summary.outstanding_receivables) && <KpiCard icon={DollarSign} tone="danger" label="Outstanding Receivables" value={money(summary.outstanding_receivables)} />}
+      </div>
+
+      {charts.length > 0 && <div className="chart-grid">{charts}</div>}
+
+      <div className="chart-grid">
+        {canSee(role, 'SALES_FIN') && <RecentTransactionsCard />}
+        {canSee(role, 'SALES_FIN') && <TopCustomersCard />}
+        {canSee(role, 'SALES_FIN') && <OutstandingReceivablesCard />}
+        {canSee(role, 'FINANCE') && <CashPositionCard />}
+        {canSee(role, 'INVENTORY_VIEW') && <InventoryAlertsCard />}
+        {has(summary.downtime_last_7_days) && (
+          <div className="card">
+            <div className="card__header"><h3><Package size={16} /> Machine Downtime — Last 7 Days</h3></div>
+            <Table
+              columns={[
+                { key: 'machine_name', header: 'Machine' },
+                { key: 'hours_down', header: 'Hours Down', render: (r) => Number(r.hours_down).toFixed(1) }
+              ]}
+              rows={summary.downtime_last_7_days}
+              emptyText="No downtime recorded in the last 7 days."
+            />
+          </div>
+        )}
       </div>
     </div>
   );

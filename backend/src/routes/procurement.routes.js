@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { postStockMovement } = require('../utils/stockLedger');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
@@ -17,7 +18,7 @@ function generatePoNumber() {
   return `PO-${y}-${Math.floor(100000 + Math.random() * 900000)}`;
 }
 
-router.get('/purchase-orders', asyncHandler(async (req, res) => {
+router.get('/purchase-orders', requireRole(...PERM.PROCUREMENT_VIEW), asyncHandler(async (req, res) => {
   const { status, supplier_id } = req.query;
   const conditions = [];
   const params = [];
@@ -32,7 +33,7 @@ router.get('/purchase-orders', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/purchase-orders/:id', asyncHandler(async (req, res) => {
+router.get('/purchase-orders/:id', requireRole(...PERM.PROCUREMENT_VIEW), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT po.*, s.name AS supplier_name FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id WHERE po.id = $1`,
     [req.params.id]
@@ -265,7 +266,7 @@ router.post('/purchase-orders/:id/reverse', requireRole('Admin', 'Procurement Of
   res.json({ data: result, error: null });
 }));
 
-router.get('/purchase-orders/:id/payments', asyncHandler(async (req, res) => {
+router.get('/purchase-orders/:id/payments', requireRole(...PERM.PROCUREMENT_VIEW), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT sp.*, u.full_name AS recorded_by_name FROM supplier_payments sp JOIN users u ON u.id = sp.recorded_by
      WHERE sp.purchase_order_id = $1 ORDER BY sp.created_at`,
@@ -353,7 +354,7 @@ router.post('/purchase-orders/:poId/payments/:paymentId/reverse', requireRole('A
   res.json({ data: result, error: null });
 }));
 
-router.get('/supplier-performance/:supplier_id', asyncHandler(async (req, res) => {
+router.get('/supplier-performance/:supplier_id', requireRole(...PERM.PROCUREMENT_VIEW), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT sp.*, po.po_number FROM supplier_performance sp JOIN purchase_orders po ON po.id = sp.purchase_order_id
      WHERE sp.supplier_id = $1 ORDER BY sp.evaluated_at DESC`,

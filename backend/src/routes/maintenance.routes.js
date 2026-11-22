@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { postStockMovement } = require('../utils/stockLedger');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
@@ -9,7 +10,7 @@ const { resolveCostCenterId } = require('../services/accountingService');
 
 const router = Router();
 
-router.get('/schedules', asyncHandler(async (req, res) => {
+router.get('/schedules', requireRole(...PERM.MAINTENANCE_VIEW), asyncHandler(async (req, res) => {
   const { due_within, machine_id } = req.query;
   const conditions = [];
   const params = [];
@@ -37,7 +38,7 @@ router.post('/schedules', requireRole('Admin', 'Production Manager', 'Technician
   res.status(201).json({ data: rows[0], error: null });
 }));
 
-router.get('/logs', asyncHandler(async (req, res) => {
+router.get('/logs', requireRole(...PERM.MAINTENANCE_VIEW), asyncHandler(async (req, res) => {
   const { machine_id } = req.query;
   const conditions = [];
   const params = [];

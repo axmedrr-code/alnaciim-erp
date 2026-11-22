@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole, invalidateUser } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { logAudit } = require('../services/auditService');
@@ -75,7 +76,7 @@ router.get('/roles', asyncHandler(async (req, res) => {
 // driver was dispatched on), commission = collections x commission_rate, and net
 // profitability = collections - commission - fuel. All derived from existing tables —
 // no separate "driver" entity, drivers are just users with role = Driver.
-router.get('/:id/driver-performance', asyncHandler(async (req, res) => {
+router.get('/:id/driver-performance', requireRole(...PERM.FIELD_PERF), asyncHandler(async (req, res) => {
   const { from, to } = req.query;
   const params = [req.params.id, from || '1900-01-01', to || '2999-12-31'];
 

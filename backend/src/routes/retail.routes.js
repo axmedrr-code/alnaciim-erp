@@ -15,6 +15,7 @@ const { Router } = require('express');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { postStockMovement } = require('../utils/stockLedger');
 const { logAudit } = require('../services/auditService');
 const { createSalesOrderFromItems, postCreditApprovalRevenue } = require('./sales.routes');
@@ -44,11 +45,11 @@ function retailOrderExistsSql(alias, paramIdx) {
             WHERE soi.sales_order_id = ${alias}.id AND cat.name = ANY($${paramIdx}))`;
 }
 
-router.get('/departments', asyncHandler(async (req, res) => {
+router.get('/departments', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req, res) => {
   res.json({ data: RETAIL_DEPARTMENTS.map((d) => ({ key: d.key, label: d.label })), error: null });
 }));
 
-router.get('/products', asyncHandler(async (req, res) => {
+router.get('/products', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req, res) => {
   const dept = findDepartment(req.query.department);
   if (!dept) throw new ApiError(400, 'department must be bottled_water or ice');
   const { rows } = await pool.query(
@@ -124,7 +125,7 @@ router.post('/sales', requireRole(...RECORD_SALE_ROLES), asyncHandler(async (req
 // ---------------------------------------------------------------------
 // 6. Sales List
 // ---------------------------------------------------------------------
-router.get('/sales', asyncHandler(async (req, res) => {
+router.get('/sales', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req, res) => {
   const { department, status, search, date_from, date_to } = req.query;
   const params = [ALL_RETAIL_CATEGORIES];
   const conditions = [retailOrderExistsSql('so', 1)];
@@ -165,7 +166,7 @@ router.get('/sales', asyncHandler(async (req, res) => {
 // GET /customers/:id/statement doesn't carry. Full invoice/payment ledger
 // still comes from that existing endpoint — never duplicated here.
 // ---------------------------------------------------------------------
-router.get('/customers/:id/profile', asyncHandler(async (req, res) => {
+router.get('/customers/:id/profile', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req, res) => {
   const reqDept = req.query.department && req.query.department !== 'all' ? findDepartment(req.query.department) : null;
   const params = [reqDept ? reqDept.categories : ALL_RETAIL_CATEGORIES];
   const deptCondition = retailOrderExistsSql('so', 1);
@@ -217,7 +218,7 @@ function deptParams(req) {
   return { params, condition: retailOrderExistsSql('so', 1) };
 }
 
-router.get('/reports/cash-sales', asyncHandler(async (req, res) => {
+router.get('/reports/cash-sales', requireRole(...PERM.RETAIL_REPORT), asyncHandler(async (req, res) => {
   const { params, condition } = deptParams(req);
   const { rows } = await pool.query(
     `SELECT so.id, so.invoice_hno, so.order_date, c.name AS customer_name, so.total_amount
@@ -229,7 +230,7 @@ router.get('/reports/cash-sales', asyncHandler(async (req, res) => {
   res.json({ data: { rows, total: rows.reduce((s, r) => s + Number(r.total_amount), 0) }, error: null });
 }));
 
-router.get('/reports/credit-sales', asyncHandler(async (req, res) => {
+router.get('/reports/credit-sales', requireRole(...PERM.RETAIL_REPORT), asyncHandler(async (req, res) => {
   const { params, condition } = deptParams(req);
   const { rows } = await pool.query(
     `SELECT so.id, so.invoice_hno, so.order_date, c.name AS customer_name, so.total_amount,
@@ -243,7 +244,7 @@ router.get('/reports/credit-sales', asyncHandler(async (req, res) => {
   res.json({ data: { rows, total: rows.reduce((s, r) => s + Number(r.total_amount), 0) }, error: null });
 }));
 
-router.get('/reports/outstanding-invoices', asyncHandler(async (req, res) => {
+router.get('/reports/outstanding-invoices', requireRole(...PERM.RETAIL_REPORT), asyncHandler(async (req, res) => {
   const { params, condition } = deptParams(req);
   const { rows } = await pool.query(
     `SELECT so.id, so.invoice_hno, so.order_date, c.name AS customer_name, so.total_amount,
@@ -257,7 +258,7 @@ router.get('/reports/outstanding-invoices', asyncHandler(async (req, res) => {
   res.json({ data: { rows, total: rows.reduce((s, r) => s + Number(r.balance), 0) }, error: null });
 }));
 
-router.get('/reports/paid-invoices', asyncHandler(async (req, res) => {
+router.get('/reports/paid-invoices', requireRole(...PERM.RETAIL_REPORT), asyncHandler(async (req, res) => {
   const { params, condition } = deptParams(req);
   const { rows } = await pool.query(
     `SELECT so.id, so.invoice_hno, so.order_date, c.name AS customer_name, so.total_amount, so.sale_type
@@ -269,7 +270,7 @@ router.get('/reports/paid-invoices', asyncHandler(async (req, res) => {
   res.json({ data: { rows, total: rows.reduce((s, r) => s + Number(r.total_amount), 0) }, error: null });
 }));
 
-router.get('/reports/daily-sales', asyncHandler(async (req, res) => {
+router.get('/reports/daily-sales', requireRole(...PERM.RETAIL_REPORT), asyncHandler(async (req, res) => {
   const { params, condition } = deptParams(req);
   const { rows } = await pool.query(
     `SELECT so.order_date AS day, SUM(so.total_amount) AS total, COUNT(*) AS invoice_count
@@ -281,7 +282,7 @@ router.get('/reports/daily-sales', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/reports/monthly-sales', asyncHandler(async (req, res) => {
+router.get('/reports/monthly-sales', requireRole(...PERM.RETAIL_REPORT), asyncHandler(async (req, res) => {
   const { params, condition } = deptParams(req);
   const { rows } = await pool.query(
     `SELECT date_trunc('month', so.order_date)::date AS month, SUM(so.total_amount) AS total, COUNT(*) AS invoice_count
@@ -293,7 +294,7 @@ router.get('/reports/monthly-sales', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/reports/top-customers', asyncHandler(async (req, res) => {
+router.get('/reports/top-customers', requireRole(...PERM.RETAIL_REPORT), asyncHandler(async (req, res) => {
   const { params, condition } = deptParams(req);
   const { rows } = await pool.query(
     `SELECT c.id, c.name, SUM(so.total_amount) AS total, COUNT(*) AS invoice_count
@@ -305,7 +306,7 @@ router.get('/reports/top-customers', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/reports/top-products', asyncHandler(async (req, res) => {
+router.get('/reports/top-products', requireRole(...PERM.RETAIL_REPORT), asyncHandler(async (req, res) => {
   const dept = findDepartment(req.query.department);
   const categories = dept ? dept.categories : ALL_RETAIL_CATEGORIES;
   const { rows } = await pool.query(

@@ -6,6 +6,7 @@ const { Router } = require('express');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { postJournalEntry, getAccountByCode, reverseJournalEntry, resolveCostCenterId } = require('../services/accountingService');
@@ -19,7 +20,7 @@ async function resolveVehicleExpenseAccount(client, category) {
   return rows[0].coa_account_id;
 }
 
-router.get('/vehicle-expenses', asyncHandler(async (req, res) => {
+router.get('/vehicle-expenses', requireRole(...PERM.FIELD_PERF), asyncHandler(async (req, res) => {
   const { truck_id, category, from, to } = req.query;
   const conditions = ['ve.voided_at IS NULL'];
   const params = [];
@@ -113,7 +114,7 @@ router.post('/vehicle-expenses/:id/reverse', requireRole('Admin', 'Finance Offic
 // Revenue is derived, not stored: every sales order this truck delivered, joined through
 // deliveries. Expenses are vehicle_expenses. Profit = revenue - expenses, with a
 // per-category breakdown so the UI can render a cost bar chart.
-router.get('/trucks/:id/profitability', asyncHandler(async (req, res) => {
+router.get('/trucks/:id/profitability', requireRole(...PERM.FINANCE), asyncHandler(async (req, res) => {
   const { from, to } = req.query;
   const params = [req.params.id, from || '1900-01-01', to || '2999-12-31'];
   const { rows: truck } = await pool.query('SELECT * FROM trucks WHERE id = $1', [req.params.id]);

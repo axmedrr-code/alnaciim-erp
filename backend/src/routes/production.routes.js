@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { postStockMovement } = require('../utils/stockLedger');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
@@ -11,7 +12,7 @@ const { postJournalEntry, getAccountByCode, reverseJournalEntry, resolveCostCent
 const router = Router();
 
 // ---- Machines ----
-router.get('/machines', asyncHandler(async (req, res) => {
+router.get('/machines', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async (req, res) => {
   const { type, status } = req.query;
   const conditions = [];
   const params = [];
@@ -77,7 +78,7 @@ async function resolveMachineCostAccount(client, category) {
   return rows[0].coa_account_id;
 }
 
-router.get('/machines/:id/costs', asyncHandler(async (req, res) => {
+router.get('/machines/:id/costs', requireRole(...PERM.PRODUCTION_COST), asyncHandler(async (req, res) => {
   const { from, to } = req.query;
   const conditions = ['mc.machine_id = $1', 'mc.voided_at IS NULL'];
   const params = [req.params.id];
@@ -170,7 +171,7 @@ router.post('/machine-costs/:id/reverse', requireRole('Admin', 'Production Manag
 // sold in the period), since a machine doesn't sell directly. Expenses = machine_costs +
 // the existing flat maintenance_logs.cost for this machine (already tracked, never
 // GL-posted — read here as-is, same as elsewhere in the app).
-router.get('/machines/:id/profitability', asyncHandler(async (req, res) => {
+router.get('/machines/:id/profitability', requireRole(...PERM.PRODUCTION_COST), asyncHandler(async (req, res) => {
   const { from, to } = req.query;
   const params = [req.params.id, from || '1900-01-01', to || '2999-12-31'];
   const { rows: machine } = await pool.query('SELECT * FROM machines WHERE id = $1', [req.params.id]);
@@ -216,7 +217,7 @@ router.get('/machines/:id/profitability', asyncHandler(async (req, res) => {
 }));
 
 // ---- Production batches ----
-router.get('/batches', asyncHandler(async (req, res) => {
+router.get('/batches', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async (req, res) => {
   const { date, production_type, status } = req.query;
   const conditions = [];
   const params = [];
@@ -418,7 +419,7 @@ router.post('/batches/:id/reverse', requireRole('Admin', 'Production Manager'), 
 }));
 
 // ---- Bill of materials ----
-router.get('/bom', asyncHandler(async (req, res) => {
+router.get('/bom', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT bom.*, p.name AS product_name, p.sku
      FROM bill_of_materials bom JOIN products p ON p.id = bom.product_id
@@ -427,7 +428,7 @@ router.get('/bom', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/bom/:id', asyncHandler(async (req, res) => {
+router.get('/bom/:id', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT bom.*, p.name AS product_name FROM bill_of_materials bom JOIN products p ON p.id = bom.product_id WHERE bom.id = $1`,
     [req.params.id]
@@ -479,7 +480,7 @@ function machineTypesFor(productionType) {
   return types;
 }
 
-router.get('/capacity-calendar', asyncHandler(async (req, res) => {
+router.get('/capacity-calendar', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async (req, res) => {
   const { production_type, from, to } = req.query;
   const machineTypes = machineTypesFor(production_type);
   if (!from || !to) throw new ApiError(400, 'from and to are required (YYYY-MM-DD)');
@@ -573,7 +574,7 @@ router.get('/capacity-calendar', asyncHandler(async (req, res) => {
   });
 }));
 
-router.get('/capacity-calendar/day', asyncHandler(async (req, res) => {
+router.get('/capacity-calendar/day', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async (req, res) => {
   const { production_type, date } = req.query;
   machineTypesFor(production_type);
   if (!date) throw new ApiError(400, 'date is required (YYYY-MM-DD)');

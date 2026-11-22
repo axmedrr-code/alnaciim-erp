@@ -446,7 +446,7 @@ router.get('/available-orders', asyncHandler(async (req, res) => {
 // split before creating anything. Stops within each proposed group are ordered
 // nearest-neighbor-from-depot when real coordinates exist; left in given order
 // otherwise (never a fabricated route).
-router.post('/suggest-split', asyncHandler(async (req, res) => {
+router.post('/suggest-split', requireRole('Admin', 'Route Supervisor', 'Sales Manager', 'Supervisor'), asyncHandler(async (req, res) => {
   const { order_ids } = req.body;
   if (!Array.isArray(order_ids) || !order_ids.length) throw new ApiError(400, 'order_ids is required');
 
@@ -940,7 +940,12 @@ async function dispatchRouteInternal(client, routeId, actorId) {
       `SELECT soi.product_id, soi.quantity FROM sales_order_items soi WHERE soi.sales_order_id = ANY($1)`,
       [orderIds]
     );
+    // Bulk Water is the exception: its warehouse stock already left (from the Finished Water Warehouse) when
+    // the tanker was LOADED, and delivery just draws that load down (truck_loads.delivered_liters). Posting a second
+    // OUT here counted the same water twice and, with allowNegative, drove an unrelated warehouse below zero.
+    const bulkWaterIds = new Set(await bulkWaterProductIds(client));
     for (const item of items) {
+      if (bulkWaterIds.has(item.product_id)) continue;
       await postStockMovement(client, {
         productId: item.product_id, warehouseId, movementType: 'OUT', quantity: Number(item.quantity),
         referenceType: 'sales', referenceId: routeId, performedBy: actorId,
