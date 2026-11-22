@@ -370,7 +370,7 @@ UPDATE customers SET hno = 'HNO-C-' || LPAD(id::text, 5, '0');
 UPDATE hno_sequences SET next_value = (SELECT COUNT(*) FROM customers) + 1 WHERE sequence_type = 'customer';
 
 UPDATE sales_orders SET invoice_hno = 'HNO-INV-' || LPAD(id::text, 5, '0');
-UPDATE hno_sequences SET next_value = (SELECT COUNT(*) FROM sales_orders) + 1 WHERE sequence_type = 'invoice';
+UPDATE hno_sequences SET next_value = COALESCE((SELECT MAX(SUBSTRING(invoice_hno FROM '[0-9]+$')::int) FROM sales_orders WHERE invoice_hno ~ '[0-9]+$'), 0) + 1 WHERE sequence_type = 'invoice';
 
 UPDATE payments SET transaction_hno = 'HNO-TXN-' || LPAD(id::text, 5, '0');
 UPDATE hno_sequences SET next_value = (SELECT COUNT(*) FROM payments) + 1 WHERE sequence_type = 'transaction';
@@ -410,8 +410,8 @@ UPDATE sales_orders SET payment_status = 'partial' WHERE id = 3;
 -- file deterministic) rather than through the app, so re-sync each counter to
 -- past the highest number actually issued above — otherwise the first real
 -- order/payment created through the app would collide with one of these.
-UPDATE hno_sequences SET next_value = (SELECT COUNT(*) FROM sales_orders) + 1 WHERE sequence_type = 'invoice';
-UPDATE hno_sequences SET next_value = (SELECT COUNT(*) FROM payments) + 1 WHERE sequence_type = 'transaction';
+UPDATE hno_sequences SET next_value = COALESCE((SELECT MAX(SUBSTRING(invoice_hno FROM '[0-9]+$')::int) FROM sales_orders WHERE invoice_hno ~ '[0-9]+$'), 0) + 1 WHERE sequence_type = 'invoice';
+UPDATE hno_sequences SET next_value = COALESCE((SELECT MAX(SUBSTRING(transaction_hno FROM '[0-9]+$')::int) FROM payments WHERE transaction_hno ~ '[0-9]+$'), 0) + 1 WHERE sequence_type = 'transaction';
 
 -- =======================================================================
 -- ACCOUNTING SEED DATA + HISTORICAL BACKFILL (see
