@@ -13,6 +13,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const { type, search, hno, hno_like, limit, qaade_id, status } = req.query;
   const conditions = [];
   const params = [];
+  let suggestOrder = null; // set for the HNO type-ahead (hno_like) only
   if (type) { params.push(type); conditions.push(`c.type = $${params.length}`); }
   if (status) { params.push(status); conditions.push(`c.status = $${params.length}`); }
   if (qaade_id) { params.push(qaade_id); conditions.push(`c.qaade_id = $${params.length}`); }
@@ -37,6 +38,12 @@ router.get('/', asyncHandler(async (req, res) => {
       params.push(`%${typed}%`);
       conditions.push(`regexp_replace(c.hno, '[,\\s]', '', 'g') ILIKE $${params.length}`);
       conditions.push(`regexp_replace(c.hno, '[,\\s]', '', 'g') ~ '^[0-9]+$'`); // pure-number HNOs only (drum/bulk-water customers)
+      // Best match first: the exact number, then HNOs that START with what was typed, then the rest; shorter
+      // (closer) numbers before longer ones, then numeric order. So typing 1152 lists 1152, 11520... before 11152.
+      params.push(typed);
+      const t = `$${params.length}`;
+      const norm = `regexp_replace(c.hno, '[,\\s]', '', 'g')`;
+      suggestOrder = `(${norm} = ${t}) DESC, (${norm} LIKE ${t} || '%') DESC, length(${norm}), ${norm}`;
     }
   } else if (search) {
     params.push(`%${search}%`);
@@ -70,7 +77,7 @@ router.get('/', asyncHandler(async (req, res) => {
              WHERE so.customer_id = c.id AND cat.name = 'Bulk Water' AND so.status = 'delivered'
             ) AS last_delivery_date
      FROM customers c LEFT JOIN qaades q ON q.id = c.qaade_id
-     ${where} ORDER BY ${hno_like ? 'c.hno' : 'c.name'}${rowLimit ? ` LIMIT ${rowLimit}` : ''}`,
+     ${where} ORDER BY ${suggestOrder || (hno_like ? 'c.hno' : 'c.name')}${rowLimit ? ` LIMIT ${rowLimit}` : ''}`,
     params
   );
   res.json({ data: rows, error: null });
