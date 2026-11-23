@@ -1292,3 +1292,172 @@ CREATE INDEX idx_follow_ups_customer ON follow_ups(customer_id, created_at);
 CREATE INDEX idx_follow_ups_next ON follow_ups(next_followup_date) WHERE next_followup_date IS NOT NULL;
 
 COMMIT;
+
+-- =====================================================================
+-- PROCUREMENT MANAGEMENT - phase 1 (see migrations/026_procurement_phase1_requisitions.sql)
+-- =====================================================================
+-- Atomic, gap-tolerant reference numbers: PR-2026-00001, QT-..., GRN-..., MIN-..., SINV-..., PV-...
+CREATE TABLE procurement_counters (
+    prefix      VARCHAR(8) NOT NULL,
+    year        INT        NOT NULL,
+    next_value  INT        NOT NULL DEFAULT 1 CHECK (next_value >= 1),
+    PRIMARY KEY (prefix, year)
+);
+
+CREATE TABLE purchase_requisitions (
+    id              SERIAL PRIMARY KEY,
+    pr_number       VARCHAR(20) UNIQUE NOT NULL,
+    department_id   INT NOT NULL REFERENCES departments(id),
+    requested_by    INT NOT NULL REFERENCES users(id),
+    title           VARCHAR(200) NOT NULL,
+    justification   TEXT NOT NULL,
+    priority        VARCHAR(10) NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high','urgent')),
+    required_date   DATE,
+    status          VARCHAR(24) NOT NULL DEFAULT 'draft'
+                      CHECK (status IN ('draft','submitted','returned_for_revision','rejected','dept_approved','approved',
+                                        'sourcing','po_issued','fulfilled','closed','cancelled')),
+    estimated_total NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (estimated_total >= 0),
+    assigned_to     INT REFERENCES users(id),                 -- Procurement Officer handling the sourcing
+    cost_center_id  INT REFERENCES cost_centers(id),
+    version         INT NOT NULL DEFAULT 1,                   -- bumped on every revision after a return
+    submitted_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_pr_department ON purchase_requisitions(department_id);
+CREATE INDEX idx_pr_requested_by ON purchase_requisitions(requested_by);
+CREATE INDEX idx_pr_status ON purchase_requisitions(status);
+CREATE INDEX idx_pr_assigned_to ON purchase_requisitions(assigned_to);
+
+CREATE TABLE purchase_requisition_lines (
+    id                  SERIAL PRIMARY KEY,
+    requisition_id      INT NOT NULL REFERENCES purchase_requisitions(id) ON DELETE CASCADE,
+    line_no             INT NOT NULL CHECK (line_no >= 1),
+    product_id          INT REFERENCES products(id),          -- NULL for a non-stock item that is described instead
+    item_name           VARCHAR(200) NOT NULL,
+    description         TEXT,
+    quantity            NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+    unit                VARCHAR(20) NOT NULL,
+    estimated_unit_cost NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (estimated_unit_cost >= 0),
+    UNIQUE (requisition_id, line_no)
+);
+CREATE INDEX idx_pr_lines_requisition ON purchase_requisition_lines(requisition_id);
+CREATE INDEX idx_pr_lines_product ON purchase_requisition_lines(product_id);
+
+-- Every decision on a procurement document: who, in what role, what, when, with a signature hash of the
+-- document snapshot that was approved. Append-only (see trigger below).
+CREATE TABLE procurement_approvals (
+    id             BIGSERIAL PRIMARY KEY,
+    entity_type    VARCHAR(24) NOT NULL CHECK (entity_type IN ('requisition','purchase_order','supplier_invoice','supplier_payment')),
+    entity_id      INT NOT NULL,
+    step           VARCHAR(30) NOT NULL CHECK (step IN ('submission','dept_review','ops_approval','assignment','po_authorization','invoice_approval','payment_approval')),
+    decision       VARCHAR(20) NOT NULL CHECK (decision IN ('submitted','approved','rejected','revision_requested','assigned','authorized','cancelled')),
+    actor_id       INT NOT NULL REFERENCES users(id),
+    actor_role     VARCHAR(60) NOT NULL,
+    comments       TEXT,
+    decided_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    signature_hash CHAR(64),                                   -- SHA-256 over the approved snapshot + actor + timestamp
+    snapshot       JSONB
+);
+CREATE INDEX idx_proc_approvals_entity ON procurement_approvals(entity_type, entity_id);
+CREATE INDEX idx_proc_approvals_actor ON procurement_approvals(actor_id);
+
+CREATE TABLE procurement_audit_logs (
+    id          BIGSERIAL PRIMARY KEY,
+    entity_type VARCHAR(30) NOT NULL,
+    entity_id   INT,
+    action      VARCHAR(30) NOT NULL,
+    actor_id    INT REFERENCES users(id),
+    actor_role  VARCHAR(60),
+    old_value   JSONB,
+    new_value   JSONB,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_proc_audit_entity ON procurement_audit_logs(entity_type, entity_id);
+CREATE INDEX idx_proc_audit_created ON procurement_audit_logs(created_at);
+
+-- Approvals and the audit log are evidence: they can be added to but never changed or removed.
+CREATE OR REPLACE FUNCTION procurement_block_mutation() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION '% is append-only', TG_TABLE_NAME;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_proc_approvals_immutable BEFORE UPDATE OR DELETE ON procurement_approvals
+  FOR EACH ROW EXECUTE FUNCTION procurement_block_mutation();
+CREATE TRIGGER trg_proc_audit_immutable BEFORE UPDATE OR DELETE ON procurement_audit_logs
+  FOR EACH ROW EXECUTE FUNCTION procurement_block_mutation();
+
+-- Attachments are stored in the database (<= 5 MB): the hosting disk is ephemeral. Existing rows keep file_path.
+ALTER TABLE attachments ADD COLUMN content BYTEA;
+ALTER TABLE attachments ADD CONSTRAINT attachments_size_check CHECK (content IS NULL OR octet_length(content) <= 5242880);
+
+-- =====================================================================
+-- PROCUREMENT MANAGEMENT - phase 2 (see migrations/027_procurement_phase2_sourcing.sql)
+-- =====================================================================
+ALTER TABLE suppliers ADD COLUMN payment_terms_days INT NOT NULL DEFAULT 30 CHECK (payment_terms_days >= 0);
+ALTER TABLE suppliers ADD COLUMN tax_no VARCHAR(40);
+
+-- One request-for-quotation per supplier per requisition.
+CREATE TABLE supplier_quotations (
+    id                 SERIAL PRIMARY KEY,
+    quotation_number   VARCHAR(20) UNIQUE NOT NULL,
+    requisition_id     INT NOT NULL REFERENCES purchase_requisitions(id),
+    supplier_id        INT NOT NULL REFERENCES suppliers(id),
+    status             VARCHAR(12) NOT NULL DEFAULT 'requested'
+                         CHECK (status IN ('requested','received','declined','selected','rejected')),
+    requested_by       INT NOT NULL REFERENCES users(id),
+    requested_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    received_at        TIMESTAMPTZ,
+    valid_until        DATE,
+    delivery_days      INT CHECK (delivery_days IS NULL OR delivery_days >= 0),
+    payment_terms_days INT CHECK (payment_terms_days IS NULL OR payment_terms_days >= 0),
+    quality_rating     INT CHECK (quality_rating IS NULL OR quality_rating BETWEEN 1 AND 5),
+    is_complete        BOOLEAN NOT NULL DEFAULT false,        -- prices every requisition line
+    total_amount       NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (total_amount >= 0),
+    notes              TEXT,
+    UNIQUE (requisition_id, supplier_id)
+);
+CREATE INDEX idx_sq_requisition ON supplier_quotations(requisition_id);
+CREATE INDEX idx_sq_supplier ON supplier_quotations(supplier_id);
+
+CREATE TABLE supplier_quotation_lines (
+    id                  SERIAL PRIMARY KEY,
+    quotation_id        INT NOT NULL REFERENCES supplier_quotations(id) ON DELETE CASCADE,
+    requisition_line_id INT NOT NULL REFERENCES purchase_requisition_lines(id),
+    unit_price          NUMERIC(12,2) NOT NULL CHECK (unit_price >= 0),
+    line_total          NUMERIC(14,2) NOT NULL CHECK (line_total >= 0),
+    UNIQUE (quotation_id, requisition_line_id)
+);
+CREATE INDEX idx_sql_quotation ON supplier_quotation_lines(quotation_id);
+
+-- The chosen supplier and WHY (mandatory unless it is the clear lowest complete quotation among 2+).
+ALTER TABLE purchase_requisitions ADD COLUMN selected_quotation_id INT REFERENCES supplier_quotations(id);
+ALTER TABLE purchase_requisitions ADD COLUMN selection_justification TEXT;
+ALTER TABLE purchase_requisitions ADD COLUMN selected_by INT REFERENCES users(id);
+ALTER TABLE purchase_requisitions ADD COLUMN selected_at TIMESTAMPTZ;
+
+-- Purchase orders raised from a requisition carry the link, the quotation and the Operation Manager authorization.
+ALTER TABLE purchase_orders ADD COLUMN requisition_id INT REFERENCES purchase_requisitions(id);
+ALTER TABLE purchase_orders ADD COLUMN quotation_id INT REFERENCES supplier_quotations(id);
+ALTER TABLE purchase_orders ADD COLUMN department_id INT REFERENCES departments(id);
+ALTER TABLE purchase_orders ADD COLUMN payment_terms_days INT CHECK (payment_terms_days IS NULL OR payment_terms_days >= 0);
+ALTER TABLE purchase_orders ADD COLUMN authorized_by INT REFERENCES users(id);
+ALTER TABLE purchase_orders ADD COLUMN authorized_at TIMESTAMPTZ;
+CREATE INDEX idx_po_requisition ON purchase_orders(requisition_id);
+-- A requisition can only have ONE live purchase order at a time (concurrency-safe).
+CREATE UNIQUE INDEX idx_po_one_live_per_requisition ON purchase_orders(requisition_id)
+  WHERE requisition_id IS NOT NULL AND status NOT IN ('cancelled','reversed');
+
+ALTER TABLE purchase_items ADD COLUMN requisition_line_id INT REFERENCES purchase_requisition_lines(id);
+
+ALTER TABLE purchase_orders DROP CONSTRAINT purchase_orders_status_check;
+ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_status_check
+  CHECK (status IN ('draft','pending_authorization','authorized','sent','partially_received','received','invoiced','paid','closed','cancelled','reversed'));
+
+ALTER TABLE procurement_approvals DROP CONSTRAINT procurement_approvals_step_check;
+ALTER TABLE procurement_approvals ADD CONSTRAINT procurement_approvals_step_check
+  CHECK (step IN ('submission','dept_review','ops_approval','assignment','supplier_selection','po_submission','po_authorization','invoice_approval','payment_approval'));
+
+-- 028: widen purchase_orders.status for pending_authorization
+ALTER TABLE purchase_orders ALTER COLUMN status TYPE VARCHAR(30);

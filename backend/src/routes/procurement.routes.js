@@ -55,7 +55,7 @@ router.post('/purchase-orders', requireRole('Admin', 'Procurement Officer'), val
     const projectId = req.body.project_id || null;
     const { rows: poRows } = await client.query(
       `INSERT INTO purchase_orders (po_number, supplier_id, expected_date, status, total_amount, created_by, notes, cost_center_id, project_id)
-       VALUES ($1,$2,$3,'sent',$4,$5,$6,$7,$8) RETURNING *`,
+       VALUES ($1,$2,$3,'pending_authorization',$4,$5,$6,$7,$8) RETURNING *`,
       [generatePoNumber(), supplier_id, expected_date || null, totalAmount, req.user.id, notes || null, costCenterId, projectId]
     );
     const po = poRows[0];
@@ -81,7 +81,7 @@ router.put('/purchase-orders/:id', requireRole('Admin', 'Procurement Officer'), 
     const { rows: poRows } = await client.query('SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.id]);
     const po = poRows[0];
     if (!po) throw new ApiError(404, 'Purchase order not found');
-    if (!['draft', 'sent'].includes(po.status)) {
+    if (!['draft', 'pending_authorization', 'authorized', 'sent'].includes(po.status)) {
       throw new ApiError(409, 'Only a PO with nothing received yet can be edited. Use Reverse to correct a received PO.');
     }
 
@@ -101,7 +101,11 @@ router.put('/purchase-orders/:id', requireRole('Admin', 'Procurement Officer'), 
     const { rows: updated } = await client.query(
       `UPDATE purchase_orders SET supplier_id = COALESCE($1, supplier_id), expected_date = COALESCE($2, expected_date),
               total_amount = $3, notes = COALESCE($4, notes),
-              cost_center_id = COALESCE($5, cost_center_id), project_id = COALESCE($6, project_id)
+              cost_center_id = COALESCE($5, cost_center_id), project_id = COALESCE($6, project_id),
+              -- editing an authorized/sent order voids the authorization: it must be authorized again
+              status = CASE WHEN status IN ('authorized','sent') THEN 'pending_authorization' ELSE status END,
+              authorized_by = CASE WHEN status IN ('authorized','sent') THEN NULL ELSE authorized_by END,
+              authorized_at = CASE WHEN status IN ('authorized','sent') THEN NULL ELSE authorized_at END
        WHERE id = $7 RETURNING *`,
       [supplier_id || null, expected_date || null, totalAmount, notes || null, cost_center_id || null, project_id || null, po.id]
     );
@@ -118,7 +122,7 @@ router.delete('/purchase-orders/:id', requireRole('Admin', 'Procurement Officer'
     const { rows: poRows } = await client.query('SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.id]);
     const po = poRows[0];
     if (!po) throw new ApiError(404, 'Purchase order not found');
-    if (!['draft', 'sent'].includes(po.status)) {
+    if (!['draft', 'pending_authorization', 'authorized', 'sent'].includes(po.status)) {
       throw new ApiError(409, 'Only a PO with nothing received yet can be deleted outright. Use Reverse for a received PO.');
     }
     await client.query('DELETE FROM purchase_items WHERE purchase_order_id = $1', [po.id]);
@@ -138,6 +142,9 @@ router.post('/purchase-orders/:id/receive', requireRole('Admin', 'Procurement Of
     const { rows: poRows } = await client.query('SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.id]);
     const po = poRows[0];
     if (!po) throw new ApiError(404, 'Purchase order not found');
+    if (!['sent', 'partially_received'].includes(po.status)) {
+      throw new ApiError(409, `Goods can only be received against a purchase order that has been authorized and sent (this one is ${po.status})`);
+    }
 
     const { rows: receiptRows } = await client.query(
       `INSERT INTO goods_receipts (purchase_order_id, received_by, warehouse_id, notes) VALUES ($1,$2,$3,$4) RETURNING *`,

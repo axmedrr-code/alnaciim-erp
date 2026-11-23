@@ -6,7 +6,7 @@ import DateFilterBar, { defaultDateRange } from '../../components/DateFilterBar'
 import client from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 
-const STATUS_BADGE = { draft: 'pending', sent: 'info', partially_received: 'info', received: 'ok', cancelled: 'low', reversed: 'low' };
+const STATUS_BADGE = { draft: 'pending', pending_authorization: 'pending', authorized: 'ok', sent: 'info', partially_received: 'info', received: 'ok', cancelled: 'low', reversed: 'low' };
 
 // Read-only detail view — same GET /procurement/purchase-orders/:id the Edit form
 // and Receive form already use, just rendered without any inputs.
@@ -214,7 +214,7 @@ export default function PurchaseOrdersTab() {
                 <td><span className={`badge badge--${STATUS_BADGE[po.status]}`}>{po.status}</span></td>
                 <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   <button className="btn-icon" title="View" onClick={() => setViewingId(po.id)}><Eye size={13} /></button>
-                  {canManage && ['draft', 'sent'].includes(po.status) && (
+                  {canManage && ['draft', 'pending_authorization', 'authorized', 'sent'].includes(po.status) && (
                     <>
                       <button className="btn secondary" onClick={() => startEdit(po)}>Edit</button>
                       <button className="btn secondary" onClick={() => deletePo(po)}>Delete</button>

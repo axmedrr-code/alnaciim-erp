@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Package, Factory, Truck, ShoppingCart, Wrench,
   Landmark, BarChart3, Settings as SettingsIcon, Menu, LogOut, Droplets,
-  PanelLeftClose, PanelLeftOpen, Sun, Moon, Building2
+  PanelLeftClose, PanelLeftOpen, Sun, Moon, Building2, ClipboardList
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -17,7 +17,8 @@ const NAV_ITEMS = [
   { to: '/inventory', label: 'Inventory', icon: Package, roles: ['Admin', 'Inventory Manager', 'Storekeeper'] },
   { to: '/production', label: 'Production', icon: Factory, roles: ['Admin', 'Production Manager', 'Technician'] },
   { to: '/sales', label: 'Sales & Distribution', icon: Truck, roles: ['Admin', 'Sales Manager'] },
-  { to: '/procurement', label: 'Procurement', icon: ShoppingCart, roles: ['Admin', 'Procurement Officer', 'Storekeeper'] },
+  { to: '/requisitions', label: 'Requisitions', icon: ClipboardList, roles: null },
+  { to: '/procurement', label: 'Procurement', icon: ShoppingCart, roles: ['Admin', 'Procurement Officer', 'Storekeeper', 'Operation Manager', 'Finance Officer'] },
   { to: '/maintenance', label: 'Maintenance', icon: Wrench, roles: ['Admin', 'Production Manager', 'Technician'] },
   { to: '/finance', label: 'Finance', icon: Landmark, roles: ['Admin', 'Finance Officer'] },
   { to: '/reports', label: 'Reports', icon: BarChart3, roles: REPORT_ROLES },
