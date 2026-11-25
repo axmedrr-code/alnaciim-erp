@@ -9,7 +9,7 @@
 
 ## 1. How to run the UAT
 
-1. One tester per account. The Admin issues each tester a password **only on request** (it is copied to the clipboard, never written down or chat-ed). Passwords of UAT accounts are random and unknown until issued; there is no screen for a user to change their own password yet (see section 3), so accounts are used for this UAT only and are re-issued or disabled afterwards.
+1. One tester per account. The Admin issues each tester a password **only on request** (it is copied to the clipboard, never written down or chat-ed). Passwords of UAT accounts are random and unknown until issued; each tester should change theirs from the user menu → *Change password*. The accounts are used for this UAT only and are re-issued or disabled afterwards.
 2. Work through the scripts in section 5 in order. For each step record **PASS / FAIL / BLOCKED** and, for FAIL/BLOCKED, a defect line (section 8). Take a screenshot for every FAIL.
 3. Use **only** the UAT data in section 4 (`UAT-*` codes) and the seeded catalogue. Do not edit or delete other people's records.
 4. Severity: **S1** blocks a business process or loses/corrupts money or stock · **S2** wrong result with a workaround · **S3** cosmetic/wording.
@@ -23,36 +23,34 @@ Login e-mail pattern: `uat.<key>@alnaciim.test`. Requisitions are approved by th
 
 | Key | Role | Dept / warehouse | Used for |
 |---|---|---|---|
-| `admin@alnaciim.com` | Admin | — | Supervises the UAT, user administration, tanker loading/closing until gap G1 is fixed |
+| `admin@alnaciim.com` | Admin | — | Supervises the UAT and user administration; can also act in any role's screens |
 | `uat.opm` | Operation Manager | Administration | Approves requisitions, authorizes POs, dashboard, incidents |
 | `uat.head.delivery` | Department Head | Delivery (3) | Reviews Delivery requisitions, confirms material issues |
 | `uat.head.maint` | Department Head | Maintenance (5) | Reviews Maintenance requisitions |
-| `uat.staff.delivery` | Data Entry Operator | Delivery (3) | Raises Delivery requisitions; incident reporting |
+| `uat.staff.delivery` | Data Entry Operator | Delivery (3) | Raises Delivery requisitions; incident reporting; closes tanker route sessions |
 | `uat.staff.maint` | Technician | Maintenance (5) | Raises Maintenance requisitions; machine maintenance; downtime |
 | `uat.proc1`, `uat.proc2` | Procurement Officer | Procurement (4) | Sourcing, quotations, POs, invoices (two people to test separation of duties) |
 | `uat.store.rm` | Storekeeper | WH-RM-01 | Goods receipt of raw materials, issuing, counts |
 | `uat.store.fg` | Storekeeper | WH-FG-01 | Finished goods stock and counts |
-| `uat.store.ro` | Storekeeper | WH-RO-01 | Tanker loading (see G1) |
+| `uat.store.ro` | Storekeeper | WH-RO-01 | Tanker loading (*Tanker Loading* menu) |
 | `uat.store.sp` | Storekeeper | WH-SP-01 | Spare parts stock |
 | `uat.invmgr` | Inventory Manager | Warehouse (6) | Approves stock counts, transfers, products |
 | `uat.prod1`, `uat.prod2` | Production Manager | Production (1) | Batches; one completes, the other approves the output |
 | `uat.fin` | Finance Officer | Finance (8) | Invoices, payments, journals, reports |
 | `uat.sales` | Sales Manager | — | Customers, orders, quotations, qaade, tanks |
 | `uat.cashier` | Cashier | — | Retail POS (bottled water, ice) |
-| `uat.collector` | Collector | — | Collections (see G3) |
+| `uat.collector` | Collector | — | Collections (*Collections* menu) |
 | `uat.routesup` | Route Supervisor | Delivery (3) | Route planning, dispatch, incidents |
 | `uat.driver1`, `uat.driver2` | Driver | Delivery (3) | Own truck `UAT-TRK-1` / `UAT-TRK-2`: deliveries and tank-fill POS |
 
-## 3. Known gaps to record before you start (not defects of your testing)
+## 3. Known gaps (status)
 
-These were found while preparing the UAT. The **API behind them is tested and works**; the screens are missing or not role-reachable. Record them in the defect log as S2 and use the workaround.
-
-| # | Gap | Workaround during UAT |
+| # | Gap | Status |
 |---|---|---|
-| G1 | **Storekeeper has no screen to load a tanker, and Data Entry has none to reconcile/close a route session.** Truck Loads sits under *Sales & Distribution → Tankers*, which only Admin and Sales Manager can open. | Admin performs *Load Tanker* and *Reconcile/Close* on behalf of the Storekeeper / Data Entry roles; the testers observe and verify the result. |
-| G2 | **Route Supervisor / Driver dispatch** happens in the **POS app** (Route Planning, fast tank-fill), not in the ERP menu. | Test route planning and tank-fill sales in the POS app. |
-| G3 | **Collector has no menu entry** (Billing & Collections is inside Finance). | Finance Officer records collections; Collector verifies via the API-level reports or is observed by Admin. |
-| G4 | **No screen to change a password** (API exists). | Admin re-issues passwords. |
+| G1 | Storekeeper had no screen to load a tanker and Data Entry none to reconcile/close a route session. | **Built** — menu **Tanker Loading** (Admin, Storekeeper, Data Entry). Storekeeper sees *Load Tanker*; Data Entry sees *Reconcile Stock*/*Complete* and the session history. Verified in the browser; UAT steps E4 and E7 use it. |
+| G2 | Route Supervisor / Driver dispatch happens in the **POS app** (Route Planning, fast tank-fill), not in the ERP menu. | By design for now: test route planning and tank-fill sales in the POS app. |
+| G3 | Collector had no menu entry. | **Built** — menu **Collections** (Collector): dashboard, receivables, receive payment, payment history, aging, reports (the Employee Performance tab is for management only). Verified in the browser; UAT step F4 uses it. |
+| G4 | No screen to change a password. | **Built** — user menu → **Change password** (current password required; a wrong one shows a message and does **not** sign you out). |
 | G5 | Maintenance cost is **not posted to the ledger**; collections/aging dashboards still count unapproved (pending) credit invoices as receivable. | Known and documented; do not report as new defects. |
 
 ## 4. Test data (already created)
@@ -73,7 +71,7 @@ The TEST database also contains rows left by automated tests (names starting `E2
 Notation: **Who** = account key · **Where** = menu path · **Expect** = result that makes the step PASS. `[ ]` = tick when PASS.
 
 ### A. Access and roles
-- [ ] **A1** Each account signs in and sees **only** its menu (compare with section 2): Procurement Officer — Requisitions, Procurement; Storekeeper — Inventory, Requisitions, Procurement; Cashier — Sales & Distribution; Technician — Production, Maintenance, Requisitions; Finance — Finance, Procurement, Reports; Driver — the minimal driver shell.
+- [ ] **A1** Each account signs in and sees **only** its menu (compare with section 2): Procurement Officer — Requisitions, Procurement; Storekeeper — Tanker Loading, Inventory, Requisitions, Procurement; Data Entry — Logistics Incidents, Tanker Loading, Requisitions; Collector — Collections, Requisitions; Cashier — Sales & Distribution; Technician — Production, Maintenance, Requisitions; Finance — Finance, Procurement, Reports; Driver — the minimal driver shell.
 - [ ] **A2** Each account opens a forbidden URL directly (e.g. `/finance` as Cashier, `/settings` as Finance): sent away or shown "not allowed"; no data visible.
 - [ ] **A3** Sign out, then press Back: no private page is shown without signing in again.
 - [ ] **A4** Five wrong passwords on a **non-UAT test e-mail** do not reveal whether the account exists (same message each time).
@@ -118,10 +116,10 @@ Use department 3 (Delivery): requester `uat.staff.delivery`, head `uat.head.deli
 - [ ] **E1** `uat.sales` — *Customers*: register a customer; an HNO is issued automatically; the credit limit and status can be edited; a **suspended** customer cannot buy on credit, a **closed** one cannot be invoiced.
 - [ ] **E2** *Bulk Water Orders*: create a **credit** invoice for `UAT-CUST-1`, approve it. Try one for `UAT-CUST-2` above 100 — refused (credit limit).
 - [ ] **E3** *Quotations*: create → send → accept → **convert**; a rejected/expired quotation cannot be converted.
-- [ ] **E4** (**G1**) Admin loads 2,000 L onto `UAT-TRK-1` from WH-RO-01. *Expect* warehouse stock reduced by 2,000.
+- [ ] **E4** `uat.store.ro` — menu **Tanker Loading → Load Tanker**: truck `UAT-TRK-1`, 2,000 L from the Finished Water Warehouse. *Expect* warehouse stock reduced by 2,000; the same storekeeper cannot close the session.
 - [ ] **E5** (**POS app, G2**) `uat.driver1` signs in to the POS app and records a tank-fill sale for `UAT-CUST-4` / `UAT-TANK-1` (400 L, price per litre, part cash). *Expect* order delivered, truck stock reduced, credit shown as receivable; a driver **cannot** sell from `UAT-TRK-2`.
 - [ ] **E6** A sale larger than the tank's capacity or the truck's remaining water is refused with nothing recorded.
-- [ ] **E7** (**G1**) Admin **reconciles** the session: physical equal to system closes it; a mismatch needs a reason; returning water to the warehouse increases WH-RO-01.
+- [ ] **E7** `uat.staff.delivery` — **Tanker Loading → Reconcile Stock** on that session: physical equal to system closes it; a mismatch needs a reason; returning water to the warehouse increases WH-RO-01.
 - [ ] **E8** `uat.routesup` — plan a route in the POS app with approved orders, dispatch it, close it; the same truck/driver cannot be on two active routes on one day.
 - [ ] **E9** *Logistics Incidents*: `uat.driver1` reports a **damaged goods** incident (needs route, quantity, description); `uat.routesup` investigates; `uat.opm` resolves. The reporter cannot investigate/resolve their own incident.
 
@@ -129,7 +127,7 @@ Use department 3 (Delivery): requester `uat.staff.delivery`, head `uat.head.deli
 - [ ] **F1** `uat.cashier` — *Sales & Distribution → Retail Sales & Billing*: cash sale of bottled water; the invoice prints; stock reduces; cash is booked.
 - [ ] **F2** Credit sale for `UAT-CUST-3`; a negative price, zero quantity or more than the store holds is refused and nothing is recorded.
 - [ ] **F3** Cashier collects a payment against **bottled water or ice** only; a bulk-water debt cannot be collected by the Cashier.
-- [ ] **F4** (**G3**) `uat.fin` — *Finance → Billing & Collections*: record a collection (oldest invoice first), overpay (excess reported as unapplied), edit the reference, **reverse** a payment (receivable restored).
+- [ ] **F4** `uat.collector` — menu **Collections → Receive Payment** (and `uat.fin` in *Finance → Billing & Collections*): record a collection (oldest invoice first), overpay (excess reported as unapplied), edit the reference, **reverse** a payment (receivable restored).
 - [ ] **F5** The customer statement and the *Debtors* report agree with the balance shown for each customer.
 
 ### G. Finance
@@ -185,7 +183,7 @@ Every row must be **blocked** with a clear message (and the data must stay uncha
 ## 9. Exit criteria and sign-off
 
 - All S1 and S2 defects fixed and re-tested; S3 accepted or scheduled.
-- Gaps G1–G3 either built and re-tested or formally accepted with the workaround.
+- Gap G2 (POS app for dispatch) accepted or addressed; G1, G3 and G4 re-tested.
 - Reconciliation R1–R5 clean.
 
 | Role / area | Tester (name) | Date | Result (PASS / PASS with notes / FAIL) | Signature |

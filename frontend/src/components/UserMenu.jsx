@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, LogOut } from 'lucide-react';
+import { ChevronDown, KeyRound, LogOut } from 'lucide-react';
+import ChangePasswordModal from './ChangePasswordModal';
 
 function initials(name) {
   if (!name) return '?';
@@ -9,6 +10,7 @@ function initials(name) {
 
 export default function UserMenu({ user, onLogout }) {
   const [open, setOpen] = useState(false);
+  const [changing, setChanging] = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -33,9 +35,11 @@ export default function UserMenu({ user, onLogout }) {
               <div className="user-menu__role">{user?.role}</div>
             </div>
           </div>
+          <button className="user-menu__item" onClick={() => { setOpen(false); setChanging(true); }}><KeyRound size={15} /> Change password</button>
           <button className="user-menu__item" onClick={onLogout}><LogOut size={15} /> Log out</button>
         </div>
       )}
+      {changing && <ChangePasswordModal onClose={() => setChanging(false)} />}
     </div>
   );
 }
