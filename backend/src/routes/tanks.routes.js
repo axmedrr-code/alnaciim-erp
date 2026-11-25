@@ -8,6 +8,7 @@ const { PERM } = require('../middleware/permissions');
 const { logAudit } = require('../services/auditService');
 
 const router = Router();
+router.param('id', (req, res, next, v) => (/^\d+$/.test(String(v)) && Number(v) <= 2147483647 ? next() : next(new ApiError(404, 'Record not found'))));
 
 router.get('/', requireRole(...PERM.TANK_VIEW), asyncHandler(async (req, res) => {
   const { customer_id, status, search } = req.query;
@@ -51,6 +52,9 @@ router.get('/:id', requireRole(...PERM.TANK_VIEW), asyncHandler(async (req, res)
 router.post('/', requireRole('Admin', 'Sales Manager'), validate(schemas.tankCreate), asyncHandler(async (req, res) => {
   const { tank_code, tank_name, customer_id, tank_type, capacity_liters, barcode, location, installed_date, notes } = req.body;
   const result = await withTransaction(async (client) => {
+    const cust = (await client.query('SELECT status FROM customers WHERE id = $1', [customer_id])).rows[0];
+    if (!cust) throw new ApiError(404, 'Customer not found');
+    if (cust.status === 'closed') throw new ApiError(409, 'A closed customer account cannot receive a new tank');
     const { rows } = await client.query(
       `INSERT INTO customer_tanks (tank_code, tank_name, customer_id, tank_type, capacity_liters, barcode, location, installed_date, notes)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
@@ -101,6 +105,20 @@ router.get('/:id/history', requireRole(...PERM.TANK_VIEW), asyncHandler(async (r
     [req.params.id]
   );
 
+  // Fills recorded through the field tank-fill POS (route stops) are refills too: the tank history must show them.
+  const { rows: posRefills } = await pool.query(
+    `SELECT rs.id, 'refill' AS event_type, COALESCE(rs.delivered_at, rr.dispatched_at, rr.created_at) AS event_date,
+            rs.delivered_liters AS quantity_delivered, so.order_number, u.full_name AS driver_name, NULL::text AS signature_name, t.plate_number
+     FROM route_stops rs
+     JOIN route_runs rr ON rr.id = rs.route_run_id
+     LEFT JOIN sales_orders so ON so.id = rs.sales_order_id
+     LEFT JOIN users u ON u.id = rr.driver_id
+     JOIN trucks t ON t.id = rr.truck_id
+     WHERE rs.customer_tank_id = $1 AND rs.status = 'delivered'
+     ORDER BY event_date DESC NULLS LAST`,
+    [req.params.id]
+  );
+
   const { rows: maintenance } = await pool.query(
     `SELECT tm.id, 'maintenance' AS event_type, tm.log_date AS event_date, tm.description, tm.cost, u.full_name AS performed_by_name
      FROM tank_maintenance_logs tm LEFT JOIN users u ON u.id = tm.performed_by
@@ -109,13 +127,14 @@ router.get('/:id/history', requireRole(...PERM.TANK_VIEW), asyncHandler(async (r
     [req.params.id]
   );
 
-  const history = [...refills, ...maintenance].sort((a, b) => new Date(b.event_date) - new Date(a.event_date));
+  const history = [...refills, ...posRefills, ...maintenance].sort((a, b) => new Date(b.event_date) - new Date(a.event_date));
   res.json({ data: { tank: tankRows[0], history }, error: null });
 }));
 
 router.post('/:id/maintenance', requireRole('Admin', 'Technician', 'Sales Manager'), validate(schemas.tankMaintenanceCreate), asyncHandler(async (req, res) => {
   const { log_date, description, cost } = req.body;
   const result = await withTransaction(async (client) => {
+    if (!(await client.query('SELECT 1 FROM customer_tanks WHERE id = $1', [req.params.id])).rows[0]) throw new ApiError(404, 'Tank not found');
     const { rows } = await client.query(
       `INSERT INTO tank_maintenance_logs (tank_id, log_date, description, performed_by, cost)
        VALUES ($1, COALESCE($2, CURRENT_DATE), $3, $4, $5) RETURNING *`,

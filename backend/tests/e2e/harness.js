@@ -11,7 +11,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 
-async function start(prefix, accounts) {
+async function start(prefix, accounts, opts = {}) {
   const DB = process.env.TEST_DATABASE_URL;
   if (!DB) { console.log('refusing: set TEST_DATABASE_URL to an isolated test database'); process.exit(1); }
   const u = new URL(DB);
@@ -27,6 +27,13 @@ async function start(prefix, accounts) {
   const rep = (name, ok, extra = '') => { total++; if (ok) pass++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${ok ? '' : extra}`); };
 
   const pool = new Pool({ connectionString: DB, ssl: SSL ? { rejectUnauthorized: false } : false, max: 2 }); pool.on('error', () => {});
+  // Neon free-tier connections occasionally drop between statements; retry those (never a failed assertion) a few times.
+  const rawQuery = pool.query.bind(pool);
+  pool.query = async (...args) => {
+    for (let i = 0; ; i++) {
+      try { return await rawQuery(...args); } catch (e) { if (i >= 3 || !/Connection terminated|ECONNRESET|ETIMEDOUT/i.test(String(e.message))) throw e; await new Promise((r) => setTimeout(r, 400 * (i + 1))); }
+    }
+  };
   const q = async (s, p) => (await pool.query(s, p)).rows;
   const roles = Object.fromEntries((await q('select id, name from roles')).map((r) => [r.name, r.id]));
   const discarded = await bcrypt.hash(crypto.randomBytes(16).toString('hex'), 10);
@@ -42,7 +49,7 @@ async function start(prefix, accounts) {
   U.admin = { id: admin.id, role: 'Admin' };
   const tok = {}; for (const [k, v] of Object.entries(U)) tok[k] = jwt.sign({ id: v.id, email: k, role: 'x' }, SECRET, { algorithm: 'HS256', expiresIn: '1h' });
 
-  const srv = spawn(process.execPath, ['--no-warnings', 'src/index.js'], { cwd: path.join(__dirname, '../..'), env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, PORT: String(PORT), DATABASE_URL: DB, DATABASE_SSL: SSL ? 'true' : '', JWT_SECRET: SECRET, BACKUP_CRON_SCHEDULE: 'disabled', CORS_ORIGIN: '', NODE_ENV: '', AUTH_CACHE_TTL_MS: '0', RATE_LIMIT_API_MAX: '1000000' }, stdio: 'ignore' });
+  const srv = spawn(process.execPath, ['--no-warnings', 'src/index.js'], { cwd: path.join(__dirname, '../..'), env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, PORT: String(PORT), DATABASE_URL: DB, DATABASE_SSL: SSL ? 'true' : '', JWT_SECRET: SECRET, BACKUP_CRON_SCHEDULE: 'disabled', CORS_ORIGIN: '', NODE_ENV: '', AUTH_CACHE_TTL_MS: '0', RATE_LIMIT_API_MAX: '1000000', ...(opts.env || {}) }, stdio: process.env.E2E_SERVER_LOG ? ['ignore', 'inherit', 'inherit'] : 'ignore' });
   let up = false; for (let i = 0; i < 60 && !up; i++) { await new Promise((r) => setTimeout(r, 300)); try { up = (await fetch(`http://localhost:${PORT}/health`)).ok; } catch (_) {} }
   if (!up) { console.log('backend did not start'); srv.kill(); process.exit(1); }
 

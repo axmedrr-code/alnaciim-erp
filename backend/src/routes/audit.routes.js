@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const { pool } = require('../config/db');
-const { asyncHandler } = require('../utils/asyncHandler');
+const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
 
 const router = Router();
@@ -9,6 +9,9 @@ router.use(requireRole('Admin'));
 
 router.get('/', asyncHandler(async (req, res) => {
   const { entity_type, entity_id, action, user_id } = req.query;
+  for (const [k, v] of [['entity_id', entity_id], ['user_id', user_id]]) {
+    if (v !== undefined && !/^\d+$/.test(String(v))) throw new ApiError(400, `${k} must be a number`);
+  }
   const conditions = [];
   const params = [];
   if (entity_type) { params.push(entity_type); conditions.push(`a.entity_type = $${params.length}`); }

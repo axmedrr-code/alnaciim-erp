@@ -116,8 +116,10 @@ async function restore(inputPath) {
 }
 
 function resolveBackupPath(filename) {
-  const resolved = path.resolve(BACKUP_DIR, filename);
-  if (!resolved.startsWith(path.resolve(BACKUP_DIR))) throw new ApiError(400, 'Invalid backup filename');
+  const root = path.resolve(BACKUP_DIR);
+  const resolved = path.resolve(root, filename);
+  // Must be INSIDE the backup folder: a bare startsWith would also accept a sibling folder that merely shares the prefix ("backups_x").
+  if (resolved === root || !resolved.startsWith(root + path.sep)) throw new ApiError(400, 'Invalid backup filename');
   return resolved;
 }
 
