@@ -8,6 +8,7 @@ const { productReadColumns } = require('../services/productReadPolicy');
 const { logAudit } = require('../services/auditService');
 
 const router = Router();
+router.param('id', (req, res, next, v) => (/^\d+$/.test(String(v)) && Number(v) <= 2147483647 ? next() : next(new ApiError(404, 'Record not found'))));
 
 router.get('/', asyncHandler(async (req, res) => {
   const { type, category_id, search, is_active } = req.query;
@@ -65,6 +66,14 @@ router.put('/:id', requireRole('Admin', 'Inventory Manager'), validate(schemas.p
   const result = await withTransaction(async (client) => {
     const before = (await client.query('SELECT * FROM products WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
     if (!before) throw new ApiError(404, 'Product not found');
+    if (req.body.is_active === false && before.is_active) {
+      const onHand = Number((await client.query('SELECT COALESCE(SUM(quantity), 0) AS n FROM stock_levels WHERE product_id = $1', [before.id])).rows[0].n);
+      if (onHand > 0) throw new ApiError(409, `This product still has ${onHand} unit(s) in stock: issue, transfer or write them off (stock count) before deactivating it`);
+    }
+    if (req.body.product_type !== undefined && req.body.product_type !== before.product_type) {
+      const used = Number((await client.query('SELECT COUNT(*)::int AS n FROM stock_movements WHERE product_id = $1', [before.id])).rows[0].n);
+      if (used > 0) throw new ApiError(409, 'The product type cannot be changed once the product has stock movements: it decides which inventory account its value is booked to');
+    }
     const { rows } = await client.query(
       `UPDATE products SET ${updates.join(', ')}, updated_at = now() WHERE id = $${params.length} RETURNING *`,
       params
@@ -79,6 +88,8 @@ router.delete('/:id', requireRole('Admin', 'Inventory Manager'), asyncHandler(as
   await withTransaction(async (client) => {
     const before = (await client.query('SELECT * FROM products WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
     if (!before) throw new ApiError(404, 'Product not found');
+    const onHand = Number((await client.query('SELECT COALESCE(SUM(quantity), 0) AS n FROM stock_levels WHERE product_id = $1', [before.id])).rows[0].n);
+    if (onHand > 0) throw new ApiError(409, `This product still has ${onHand} unit(s) in stock: issue, transfer or write them off (stock count) before deactivating it`);
     const { rows } = await client.query(
       `UPDATE products SET is_active = false, updated_at = now() WHERE id = $1 RETURNING *`,
       [req.params.id]

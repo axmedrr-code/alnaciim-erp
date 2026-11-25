@@ -42,6 +42,19 @@ router.post('/login', loginIpLimiter, loginAccountLimiter, validate(schemas.logi
   res.json({ data: { token, user: payload }, error: null });
 }));
 
+// Self-service password change: needs the current password, never returns or logs any password.
+router.post('/change-password', authenticate, validate(schemas.passwordChange), asyncHandler(async (req, res) => {
+  const { current_password, new_password } = req.body;
+  if (current_password === new_password) throw new ApiError(400, 'The new password must be different from the current one');
+  const { rows } = await pool.query('SELECT id, password_hash FROM users WHERE id = $1 AND is_active = true', [req.user.id]);
+  const valid = await bcrypt.compare(current_password, rows[0] ? rows[0].password_hash : DUMMY_HASH);
+  if (!rows[0] || !valid) throw new ApiError(401, 'The current password is incorrect');
+  const hash = await bcrypt.hash(new_password, 10);
+  await pool.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2', [hash, req.user.id]);
+  await pool.query(`INSERT INTO audit_logs (user_id, action, entity_type, entity_id, new_value) VALUES ($1,'UPDATE','user_password',$1,$2)`, [req.user.id, JSON.stringify({ event: 'password_changed_by_user' })]);
+  res.json({ data: { password_changed: true }, error: null });
+}));
+
 router.get('/me', authenticate, asyncHandler(async (req, res) => {
   res.json({ data: req.user, error: null });
 }));

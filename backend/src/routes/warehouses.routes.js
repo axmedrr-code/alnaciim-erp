@@ -8,6 +8,7 @@ const { PERM } = require('../middleware/permissions');
 const { logAudit } = require('../services/auditService');
 
 const router = Router();
+router.param('id', (req, res, next, v) => (/^\d+$/.test(String(v)) && Number(v) <= 2147483647 ? next() : next(new ApiError(404, 'Record not found'))));
 
 router.get('/', requireRole(...PERM.WAREHOUSE_VIEW), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
@@ -43,6 +44,14 @@ router.put('/:id', requireRole('Admin', 'Inventory Manager'), validate(schemas.w
   const result = await withTransaction(async (client) => {
     const before = (await client.query('SELECT * FROM warehouses WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
     if (!before) throw new ApiError(404, 'Warehouse not found');
+    if (req.body.is_active === false && before.is_active) {
+      const onHand = Number((await client.query('SELECT COALESCE(SUM(quantity), 0) AS n FROM stock_levels WHERE warehouse_id = $1', [before.id])).rows[0].n);
+      if (onHand > 0) throw new ApiError(409, 'This warehouse still holds stock: transfer or write it off before deactivating the warehouse');
+    }
+    if (req.body.code !== undefined && req.body.code !== before.code && /^WH-/.test(before.code)) {
+      const used = Number((await client.query('SELECT COUNT(*)::int AS n FROM stock_movements WHERE warehouse_id = $1', [before.id])).rows[0].n);
+      if (used > 0) throw new ApiError(409, 'The code of a warehouse that already has stock movements cannot be changed: other modules refer to it');
+    }
     const { rows } = await client.query(
       `UPDATE warehouses SET ${updates.join(', ')} WHERE id = $${params.length} RETURNING *`,
       params

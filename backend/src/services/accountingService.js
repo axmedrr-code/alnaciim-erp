@@ -44,7 +44,11 @@ async function defaultCompanyBranch(client) {
 // explicitly picked, else the department's default cost center by code (e.g. every
 // sale defaults to CC-SALES unless the user picks something else).
 async function resolveCostCenterId(client, providedId, fallbackCode) {
-  if (providedId) return providedId;
+  if (providedId) {
+    const cc = (await client.query('SELECT is_active FROM cost_centers WHERE id = $1', [providedId])).rows[0];
+    if (cc && cc.is_active === false) throw new ApiError(409, 'This cost center has been deactivated and cannot receive new postings');
+    return providedId;
+  }
   if (!fallbackCode) return null;
   const { rows } = await client.query('SELECT id FROM cost_centers WHERE code = $1', [fallbackCode]);
   return rows[0]?.id || null;

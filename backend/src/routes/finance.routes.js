@@ -5,7 +5,7 @@ const { requireRole } = require('../middleware/auth');
 const { PERM } = require('../middleware/permissions');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
-const { postJournalEntry, getAccountByCode, reverseJournalEntry } = require('../services/accountingService');
+const { postJournalEntry, getAccountByCode, reverseJournalEntry, resolveCostCenterId } = require('../services/accountingService');
 const { logAudit } = require('../services/auditService');
 
 const router = Router();
@@ -37,6 +37,7 @@ router.post('/expenses', requireRole('Admin', 'Finance Officer'), validate(schem
   const method = payment_method || 'cash';
 
   const result = await withTransaction(async (client) => {
+    await resolveCostCenterId(client, cost_center_id, null); // refuses a deactivated cost center
     const { rows: catRows } = await client.query('SELECT * FROM expense_categories WHERE id = $1', [category_id]);
     if (!catRows[0]) throw new ApiError(404, 'Expense category not found');
     if (!catRows[0].coa_account_id) throw new ApiError(400, `Expense category "${catRows[0].name}" is not mapped to a Chart of Accounts account`);
