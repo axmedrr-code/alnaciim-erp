@@ -112,11 +112,30 @@ router.get('/orders/:id/invoice', requireRole(...PERM.SALES_FIN), asyncHandler(a
 // the one place that logic lives. Cash sales settle immediately (a payment is posted in
 // the same transaction, invoice opens already paid); credit sales add straight to the
 // customer's open/debtor balance, subject to their credit limit (Admin can override).
+// Every path that creates an invoice (Sales, Retail POS, quotation conversion, route dispatch) funnels through here, so the
+// amount rules live here: no zero/negative quantity, no negative price, no discount larger than its line or the invoice.
+function assertValidOrderAmounts({ items, discount, tax, deliveryFee }) {
+  if (!Array.isArray(items) || !items.length) throw new ApiError(400, 'At least one item is required');
+  let subtotal = 0;
+  for (const it of items) {
+    const qty = Number(it.quantity), price = Number(it.unit_price), disc = Number(it.discount || 0);
+    if (!Number.isFinite(qty) || qty <= 0) throw new ApiError(400, 'Every item needs a quantity greater than zero');
+    if (!Number.isFinite(price) || price < 0) throw new ApiError(400, 'Unit prices cannot be negative');
+    if (!Number.isFinite(disc) || disc < 0 || disc > qty * price + 1e-9) throw new ApiError(400, 'A line discount cannot be negative or larger than the line');
+    subtotal += qty * price - disc;
+  }
+  for (const [label, v] of [['discount', discount], ['tax', tax], ['delivery fee', deliveryFee]]) {
+    if (v !== undefined && v !== null && (!Number.isFinite(Number(v)) || Number(v) < 0)) throw new ApiError(400, `The ${label} cannot be negative`);
+  }
+  if (Number(discount || 0) > subtotal + 1e-9) throw new ApiError(400, 'The invoice discount cannot exceed the invoice subtotal');
+}
+
 async function createSalesOrderFromItems(client, {
   customerId, deliveryDate, items, discount, tax, deliveryFee, notes,
   saleType, cashPaymentMethod, costCenterIdInput, projectId, actorId, actorRole,
   customerTankId, priority
 }) {
+  assertValidOrderAmounts({ items, discount, tax, deliveryFee });
   const { rows: customerRows } = await client.query('SELECT * FROM customers WHERE id = $1', [customerId]);
   const customer = customerRows[0];
   if (!customer) throw new ApiError(404, 'Customer not found');
@@ -1112,9 +1131,9 @@ router.put('/quotations/:id/reject', requireRole('Admin', 'Sales Manager'), asyn
 
 router.put('/quotations/:id/accept', requireRole('Admin', 'Sales Manager'), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
-    `UPDATE quotations SET status = 'accepted' WHERE id = $1 AND status = 'sent' RETURNING *`, [req.params.id]
+    `UPDATE quotations SET status = 'accepted' WHERE id = $1 AND status = 'sent' AND (valid_until IS NULL OR valid_until >= CURRENT_DATE) RETURNING *`, [req.params.id]
   );
-  if (!rows[0]) throw new ApiError(400, 'Quotation not found or not sent');
+  if (!rows[0]) throw new ApiError(400, 'Quotation not found, not sent, or past its valid-until date');
   res.json({ data: rows[0], error: null });
 }));
 
@@ -1131,6 +1150,8 @@ router.post('/quotations/:id/convert', requireRole('Admin', 'Sales Manager'), va
     if (!quotation) throw new ApiError(404, 'Quotation not found');
     if (quotation.status === 'converted') throw new ApiError(409, 'This quotation has already been converted');
     if (['rejected', 'expired'].includes(quotation.status)) throw new ApiError(409, `A ${quotation.status} quotation cannot be converted`);
+    const expired = (await client.query('SELECT valid_until < CURRENT_DATE AS expired FROM quotations WHERE id = $1', [quotation.id])).rows[0];
+    if (expired && expired.expired) throw new ApiError(409, 'This quotation is past its valid-until date and can no longer be converted');
 
     const { rows: items } = await client.query(
       `SELECT product_id, quantity, unit_price, discount FROM quotation_items WHERE quotation_id = $1`, [quotation.id]
