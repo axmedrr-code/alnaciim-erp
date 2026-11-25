@@ -66,7 +66,7 @@ export function CollectionDashboardTab() {
         <div className="kpi-card"><div className="kpi-card__label">Total Outstanding Receivables</div><div className="kpi-card__value" style={{ color: 'var(--danger)' }}>{money(d.total_outstanding)}</div></div>
         <div className="kpi-card"><div className="kpi-card__label">Cash Collected Today</div><div className="kpi-card__value">{money(d.cash_collected_today)}</div></div>
         <div className="kpi-card"><div className="kpi-card__label">Cash Collected This Month</div><div className="kpi-card__value">{money(d.cash_collected_month)}</div></div>
-        <div className="kpi-card"><div className="kpi-card__label">Credit Sales This Month</div><div className="kpi-card__value">{money(d.credit_collected_month)}</div></div>
+        <div className="kpi-card"><div className="kpi-card__label">Credit Collected This Month</div><div className="kpi-card__value">{money(d.credit_collected_month)}</div></div>
         <div className="kpi-card"><div className="kpi-card__label">Customers With Balance</div><div className="kpi-card__value">{d.customers_with_balance}</div></div>
         <div className="kpi-card"><div className="kpi-card__label">Collection Rate</div><div className="kpi-card__value">{d.collection_rate_pct.toFixed(1)}%</div></div>
         <div className="kpi-card"><div className="kpi-card__label">Avg Collection Days</div><div className="kpi-card__value">{Number(d.avg_collection_days).toFixed(1)}</div></div>

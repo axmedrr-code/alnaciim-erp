@@ -1,3 +1,4 @@
+import ReceiveForm from './ReceiveForm';
 import { useMemo, useState } from 'react';
 import { Eye, X } from 'lucide-react';
 import { useApi } from '../../components/useApi';
@@ -94,43 +95,6 @@ function NewPoForm({ suppliers, products, onCreated, onCancel, editingPo, editin
       {' '}<button type="submit" className="btn">{isEdit ? 'Save Changes' : 'Create PO'}</button>
       {' '}<button type="button" className="btn secondary" onClick={onCancel}>Cancel</button>
     </form>
-  );
-}
-
-function ReceiveForm({ po, warehouses, onDone }) {
-  const { rows: detail } = useApi(`/procurement/purchase-orders/${po.id}`);
-  const [warehouseId, setWarehouseId] = useState('');
-  const [quantities, setQuantities] = useState({});
-
-  async function receive() {
-    const items = (detail.items || [])
-      .filter((it) => quantities[it.id])
-      .map((it) => ({ purchase_item_id: it.id, quantity_received: Number(quantities[it.id]), condition: 'good' }));
-    if (!items.length || !warehouseId) return;
-    await client.post(`/procurement/purchase-orders/${po.id}/receive`, { items, warehouse_id: Number(warehouseId) });
-    onDone();
-  }
-
-  if (!detail) return <span className="muted">Loading…</span>;
-
-  return (
-    <div className="card" style={{ marginTop: 8 }}>
-      <strong>Receive against {po.po_number}</strong>
-      <div style={{ margin: '8px 0' }}>
-        <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
-          <option value="">Receiving warehouse…</option>
-          {warehouses?.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-        </select>
-      </div>
-      {detail.items.map((it) => (
-        <div key={it.id} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-          <span style={{ flex: 2 }}>{it.product_name} (ordered {it.quantity_ordered}, received {it.quantity_received})</span>
-          <input type="number" step="0.001" style={{ flex: 1 }} placeholder="Qty received"
-            value={quantities[it.id] || ''} onChange={(e) => setQuantities({ ...quantities, [it.id]: e.target.value })} />
-        </div>
-      ))}
-      <button className="btn" onClick={receive}>Confirm Receipt</button>
-    </div>
   );
 }
 

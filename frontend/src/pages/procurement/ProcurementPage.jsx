@@ -2,10 +2,14 @@ import { useState } from 'react';
 import PurchaseOrdersTab from './PurchaseOrdersTab';
 import SuppliersTab from './SuppliersTab';
 import PoAuthorizationTab from './PoAuthorizationTab';
+import SupplierInvoicesTab from './SupplierInvoicesTab';
+import MaterialIssuesTab from './MaterialIssuesTab';
 
 const TABS = [
   { key: 'pos', label: 'Purchase Orders', Component: PurchaseOrdersTab },
   { key: 'flow', label: 'PO Authorization & Tracking', Component: PoAuthorizationTab },
+  { key: 'issues', label: 'Material Issues', Component: MaterialIssuesTab },
+  { key: 'invoices', label: 'Supplier Invoices & Vouchers', Component: SupplierInvoicesTab },
   { key: 'suppliers', label: 'Suppliers', Component: SuppliersTab }
 ];
 

@@ -3,6 +3,7 @@ import {
   ClipboardList, Send, BarChart3, Building2, Receipt
 } from 'lucide-react';
 import GroupedTabs from '../../components/GroupedTabs';
+import { useAuth } from '../../context/AuthContext';
 import OverviewDashboardTab from './OverviewDashboardTab';
 import RoWaterTab from './RoWaterTab';
 import BottledWaterTab from './BottledWaterTab';
@@ -32,13 +33,15 @@ const GROUPS = [
 ];
 
 export default function SalesPage() {
+  const { user } = useAuth();
+  const groups = user?.role === 'Cashier' ? GROUPS.filter((group) => group.key === 'retail-sales') : GROUPS;
   return (
     <div>
       <div className="page-header">
         <h1><Building2 size={22} color="var(--primary)" /> Sales & Distribution</h1>
         <p>Bulk (RO) Water, Bottled Water, and Ice — kept as separate business lines throughout.</p>
       </div>
-      <GroupedTabs groups={GROUPS} />
+      <GroupedTabs groups={groups} />
     </div>
   );
 }

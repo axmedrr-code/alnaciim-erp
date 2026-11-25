@@ -8,6 +8,8 @@ const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { logAudit } = require('../services/auditService');
 const { postJournalEntry, getAccountByCode, reverseJournalEntry, resolveCostCenterId } = require('../services/accountingService');
+const { outputApprovalState, outputWasPosted } = require('../services/productionOutputPolicy');
+const { canResolveDowntime, shouldRestoreMachineOperational } = require('../services/productionDowntimePolicy');
 
 const router = Router();
 
@@ -25,33 +27,46 @@ router.get('/machines', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async
 
 router.post('/machines', requireRole('Admin', 'Production Manager'), validate(schemas.machineCreate), asyncHandler(async (req, res) => {
   const { code, name, type, warehouse_id, purchase_date, specifications } = req.body;
-  const { rows } = await pool.query(
-    `INSERT INTO machines (code, name, type, warehouse_id, purchase_date, specifications)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    [code, name, type, warehouse_id || null, purchase_date || null, specifications || null]
-  );
-  res.status(201).json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO machines (code, name, type, warehouse_id, purchase_date, specifications)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [code, name, type, warehouse_id || null, purchase_date || null, specifications || null]
+    );
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'machine', entityId: rows[0].id, newValue: rows[0] });
+    return rows[0];
+  });
+  res.status(201).json({ data: result, error: null });
 }));
 
 router.post('/machines/:id/usage-logs', requireRole('Admin', 'Production Manager', 'Technician'), validate(schemas.usageLogCreate), asyncHandler(async (req, res) => {
   const { log_date, shift, hours_used, output_quantity, output_unit, notes } = req.body;
-  const { rows } = await pool.query(
-    `INSERT INTO machine_usage_logs (machine_id, log_date, shift, hours_used, output_quantity, output_unit, operator_id, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [req.params.id, log_date, shift || null, hours_used, output_quantity || null, output_unit || null, req.user.id, notes || null]
-  );
-  res.status(201).json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO machine_usage_logs (machine_id, log_date, shift, hours_used, output_quantity, output_unit, operator_id, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [req.params.id, log_date, shift || null, hours_used, output_quantity || null, output_unit || null, req.user.id, notes || null]
+    );
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'machine_usage_log', entityId: rows[0].id, newValue: rows[0] });
+    return rows[0];
+  });
+  res.status(201).json({ data: result, error: null });
 }));
 
 router.post('/machines/:id/downtime', requireRole('Admin', 'Production Manager', 'Technician'), validate(schemas.downtimeCreate), asyncHandler(async (req, res) => {
   const { start_time, category, reason } = req.body;
   const result = await withTransaction(async (client) => {
+    const machine = (await client.query('SELECT * FROM machines WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+    if (!machine) throw new ApiError(404, 'Machine not found');
+    if (machine.status === 'retired') throw new ApiError(409, 'A retired machine cannot be marked down');
     const { rows } = await client.query(
       `INSERT INTO downtime_logs (machine_id, start_time, category, reason, reported_by)
        VALUES ($1,$2,$3,$4,$5) RETURNING *`,
       [req.params.id, start_time, category, reason || null, req.user.id]
     );
-    await client.query(`UPDATE machines SET status = 'breakdown' WHERE id = $1 AND status != 'retired'`, [req.params.id]);
+    const updatedMachine = (await client.query(`UPDATE machines SET status = 'breakdown' WHERE id = $1 AND status != 'breakdown' RETURNING *`, [req.params.id])).rows[0];
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'machine_downtime', entityId: rows[0].id, newValue: rows[0] });
+    if (updatedMachine) await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'machine', entityId: machine.id, oldValue: machine, newValue: updatedMachine });
     return rows[0];
   });
   res.status(201).json({ data: result, error: null });
@@ -60,13 +75,25 @@ router.post('/machines/:id/downtime', requireRole('Admin', 'Production Manager',
 router.put('/downtime/:id/resolve', requireRole('Admin', 'Production Manager', 'Technician'), validate(schemas.downtimeResolve), asyncHandler(async (req, res) => {
   const { end_time } = req.body;
   const result = await withTransaction(async (client) => {
-    const { rows } = await client.query(
+    const downtime = (await client.query('SELECT * FROM downtime_logs WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+    if (!downtime) throw new ApiError(404, 'Downtime log not found');
+    if (!canResolveDowntime(downtime)) throw new ApiError(409, 'This downtime log has already been resolved');
+    const machine = (await client.query('SELECT * FROM machines WHERE id = $1 FOR UPDATE', [downtime.machine_id])).rows[0];
+    const resolved = (await client.query(
       `UPDATE downtime_logs SET end_time = $1, resolved_by = $2 WHERE id = $3 RETURNING *`,
-      [end_time || new Date(), req.user.id, req.params.id]
-    );
-    if (!rows[0]) throw new ApiError(404, 'Downtime log not found');
-    await client.query(`UPDATE machines SET status = 'operational' WHERE id = $1`, [rows[0].machine_id]);
-    return rows[0];
+      [end_time || new Date(), req.user.id, downtime.id]
+    )).rows[0];
+    const otherOpen = Number((await client.query(
+      'SELECT COUNT(*) AS count FROM downtime_logs WHERE machine_id = $1 AND end_time IS NULL AND id <> $2',
+      [downtime.machine_id, downtime.id]
+    )).rows[0].count);
+    let updatedMachine = null;
+    if (machine && shouldRestoreMachineOperational(machine.status, otherOpen)) {
+      updatedMachine = (await client.query(`UPDATE machines SET status = 'operational' WHERE id = $1 RETURNING *`, [machine.id])).rows[0];
+    }
+    await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'machine_downtime', entityId: downtime.id, oldValue: downtime, newValue: resolved });
+    if (updatedMachine) await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'machine', entityId: machine.id, oldValue: machine, newValue: updatedMachine });
+    return resolved;
   });
   res.json({ data: result, error: null });
 }));
@@ -227,7 +254,9 @@ router.get('/batches', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const { rows } = await pool.query(
-    `SELECT pb.*, m.name AS machine_name, p.name AS product_name, u.full_name AS supervisor_name
+    `SELECT pb.*, (pb.actual_qty - pb.planned_qty) AS production_variance,
+            CASE WHEN pb.planned_qty > 0 AND pb.actual_qty IS NOT NULL THEN ((pb.actual_qty - pb.planned_qty) / pb.planned_qty) * 100 ELSE NULL END AS production_variance_pct,
+            m.name AS machine_name, p.name AS product_name, u.full_name AS supervisor_name
      FROM production_batches pb
      JOIN machines m ON m.id = pb.machine_id
      LEFT JOIN products p ON p.id = pb.product_id
@@ -241,13 +270,17 @@ router.get('/batches', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async 
 
 router.post('/batches', requireRole('Admin', 'Production Manager'), validate(schemas.batchCreate), asyncHandler(async (req, res) => {
   const { batch_number, production_type, product_id, machine_id, planned_qty, unit, shift, start_time, destination_warehouse_id, notes } = req.body;
-  const { rows } = await pool.query(
-    `INSERT INTO production_batches
-       (batch_number, production_type, product_id, machine_id, planned_qty, unit, shift, start_time, supervisor_id, destination_warehouse_id, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-    [batch_number, production_type, product_id || null, machine_id, planned_qty || 0, unit, shift || null, start_time || null, req.user.id, destination_warehouse_id || null, notes || null]
-  );
-  res.status(201).json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO production_batches
+         (batch_number, production_type, product_id, machine_id, planned_qty, unit, shift, start_time, supervisor_id, destination_warehouse_id, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [batch_number, production_type, product_id || null, machine_id, planned_qty || 0, unit, shift || null, start_time || null, req.user.id, destination_warehouse_id || null, notes || null]
+    );
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'production_batch', entityId: rows[0].id, newValue: rows[0] });
+    return rows[0];
+  });
+  res.status(201).json({ data: result, error: null });
 }));
 
 // Nothing posts to the stock ledger until a batch is completed, so 'planned'/'in_progress'
@@ -292,13 +325,18 @@ router.delete('/batches/:id', requireRole('Admin', 'Production Manager'), asyncH
 }));
 
 router.put('/batches/:id/start', requireRole('Admin', 'Production Manager'), asyncHandler(async (req, res) => {
-  const { rows } = await pool.query(
-    `UPDATE production_batches SET status = 'in_progress', start_time = COALESCE(start_time, now())
-     WHERE id = $1 AND status = 'planned' RETURNING *`,
-    [req.params.id]
-  );
-  if (!rows[0]) throw new ApiError(400, 'Batch not found or not in planned status');
-  res.json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const batch = (await client.query('SELECT * FROM production_batches WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+    if (!batch) throw new ApiError(404, 'Batch not found');
+    if (batch.status !== 'planned') throw new ApiError(409, 'Only a planned batch can be started');
+    const started = (await client.query(
+      `UPDATE production_batches SET status = 'in_progress', start_time = COALESCE(start_time, now()) WHERE id = $1 RETURNING *`,
+      [batch.id]
+    )).rows[0];
+    await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'production_batch', entityId: batch.id, oldValue: batch, newValue: started });
+    return started;
+  });
+  res.json({ data: result, error: null });
 }));
 
 // Completing a batch: records material consumption (OUT) and finished-goods output (IN)
@@ -306,20 +344,24 @@ router.put('/batches/:id/start', requireRole('Admin', 'Production Manager'), asy
 // consumption is auto-calculated from the product's bill of materials (quantity_per_unit ×
 // (actual_qty + wastage_qty), since wasted units still consumed raw material).
 router.put('/batches/:id/complete', requireRole('Admin', 'Production Manager'), validate(schemas.batchComplete), asyncHandler(async (req, res) => {
-  const { actual_qty, wastage_qty, wastage_notes, materials, materials_warehouse_id, qc_status } = req.body;
+  const { actual_qty, wastage_qty, wastage_notes, variance_notes, materials, materials_warehouse_id, qc_status } = req.body;
 
   const result = await withTransaction(async (client) => {
     const { rows: batchRows } = await client.query('SELECT * FROM production_batches WHERE id = $1 FOR UPDATE', [req.params.id]);
     const batch = batchRows[0];
     if (!batch) throw new ApiError(404, 'Batch not found');
-    if (batch.status === 'completed') throw new ApiError(400, 'Batch already completed');
+    if (batch.status !== 'in_progress') throw new ApiError(409, 'Only an in-progress batch can be completed');
 
     // RO Water production is the only source of Finished Water Warehouse
     // stock — a batch that can't actually receipt anywhere would complete
     // with the truck-loading side none the wiser, so this is caught here
     // rather than silently allowed.
-    if (batch.production_type === 'RO_WATER' && (!batch.product_id || !batch.destination_warehouse_id)) {
-      throw new ApiError(400, 'This RO Water batch needs an Output Product and Destination Warehouse set before it can be completed.');
+    if (!batch.product_id || !batch.destination_warehouse_id)
+      throw new ApiError(400, 'Every production batch needs an Output Product and Finished Goods Warehouse before completion.');
+    if (batch.product_id) {
+      const output = (await client.query("SELECT id FROM products WHERE id=$1 AND product_type='finished_good' AND is_active=true", [batch.product_id])).rows[0];
+      const destination = (await client.query("SELECT id FROM warehouses WHERE id=$1 AND type='finished_goods' AND is_active=true", [batch.destination_warehouse_id])).rows[0];
+      if (!output || !destination) throw new ApiError(400, 'Production output must use an active finished-good product and active finished-goods warehouse');
     }
 
     let resolvedMaterials = materials;
@@ -341,7 +383,14 @@ router.put('/batches/:id/complete', requireRole('Admin', 'Production Manager'), 
       }
     }
 
-    for (const m of resolvedMaterials || []) {
+    if (!resolvedMaterials?.length) {
+      throw new ApiError(409, 'No production materials are configured for this batch. Add an active bill of materials or submit material consumption before completion.');
+    }
+
+    for (const m of resolvedMaterials) {
+      const rawMaterial = (await client.query("SELECT id FROM products WHERE id=$1 AND product_type='raw_material' AND is_active=true", [m.product_id])).rows[0];
+      const materialsWarehouse = (await client.query("SELECT id FROM warehouses WHERE id=$1 AND type='raw_material' AND is_active=true", [m.warehouse_id])).rows[0];
+      if (!rawMaterial || !materialsWarehouse) throw new ApiError(400, 'Production consumption must reference active raw-material products and raw-material warehouses');
       await client.query(
         `INSERT INTO production_batch_materials (batch_id, product_id, quantity_used, warehouse_id) VALUES ($1,$2,$3,$4)`,
         [batch.id, m.product_id, m.quantity_used, m.warehouse_id]
@@ -353,26 +402,55 @@ router.put('/batches/:id/complete', requireRole('Admin', 'Production Manager'), 
       });
     }
 
-    // Only QC-passed output ever becomes real, loadable stock. A failed
-    // batch is still recorded (actual_qty, wastage, everything else) — it
-    // simply never posts a stock receipt, so it can never reach a truck.
-    if (batch.product_id && batch.destination_warehouse_id && qc_status === 'passed') {
-      await postStockMovement(client, {
-        productId: batch.product_id, warehouseId: batch.destination_warehouse_id, movementType: 'IN', quantity: actual_qty,
-        referenceType: 'production', referenceId: batch.id, performedBy: req.user.id,
-        notes: `Output of ${batch.batch_number}`
-      });
-    }
-
     const { rows: updated } = await client.query(
-      `UPDATE production_batches SET status = 'completed', actual_qty = $1, wastage_qty = $2, wastage_notes = $3, qc_status = $4, end_time = now() WHERE id = $5 RETURNING *`,
-      [actual_qty, wastage_qty || 0, wastage_notes || null, qc_status, batch.id]
+      `UPDATE production_batches SET status = 'completed', actual_qty = $1, wastage_qty = $2, wastage_notes = $3, variance_notes = $4,
+       qc_status = $5, end_time = now(), output_approval_status = $6, completed_by = $7 WHERE id = $8 RETURNING *`,
+      [actual_qty, wastage_qty || 0, wastage_notes || null, variance_notes || null, qc_status,
+        outputApprovalState({ productId: batch.product_id, destinationWarehouseId: batch.destination_warehouse_id, qcStatus: qc_status, actualQty: actual_qty }), req.user.id, batch.id]
     );
+    await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'production_batch', entityId: batch.id,
+      oldValue: batch, newValue: updated[0] });
     return updated[0];
   });
 
   res.json({ data: result, error: null });
 }));
+
+router.post('/batches/:id/output-decision', requireRole('Admin', 'Production Manager'),
+  validate(schemas.productionOutputDecision), asyncHandler(async (req, res) => {
+    const result = await withTransaction(async (client) => {
+      const batch = (await client.query('SELECT * FROM production_batches WHERE id=$1 FOR UPDATE', [req.params.id])).rows[0];
+      if (!batch) throw new ApiError(404, 'Batch not found');
+      if (batch.status !== 'completed' || batch.output_approval_status !== 'pending')
+        throw new ApiError(409, 'Only a completed QC-passed batch awaiting output approval can be decided');
+      if ((batch.completed_by || batch.supervisor_id) === req.user.id && req.user.role !== 'Admin')
+        throw new ApiError(403, 'The batch supervisor cannot approve their own production output');
+      if (req.body.decision === 'reject') {
+        const rejected = (await client.query(
+          `UPDATE production_batches SET output_approval_status='rejected',output_approved_by=$1,output_approved_at=now(),output_decision_reason=$2
+           WHERE id=$3 RETURNING *`, [req.user.id, req.body.reason, batch.id]
+        )).rows[0];
+        await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'production_batch', entityId: batch.id,
+          oldValue: { output_approval_status: 'pending' }, newValue: { output_approval_status: 'rejected', reason: req.body.reason } });
+        return rejected;
+      }
+      if (!batch.product_id || !batch.destination_warehouse_id || batch.qc_status !== 'passed' || Number(batch.actual_qty) <= 0)
+        throw new ApiError(409, 'Only positive-quantity QC-passed output assigned to a warehouse can be approved');
+      await postStockMovement(client, { productId: batch.product_id, warehouseId: batch.destination_warehouse_id,
+        movementType: 'IN', quantity: Number(batch.actual_qty), referenceType: 'production', referenceId: batch.id,
+        performedBy: req.user.id, notes: `Approved output of ${batch.batch_number}` });
+      const approved = (await client.query(
+        `UPDATE production_batches SET output_approval_status='approved',output_approved_by=$1,output_approved_at=now(),output_decision_reason=$2
+         WHERE id=$3 RETURNING *`, [req.user.id, req.body.reason, batch.id]
+      )).rows[0];
+      await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'production_batch', entityId: batch.id,
+        oldValue: { output_approval_status: 'pending' }, newValue: { output_approval_status: 'approved',
+          approved_by: req.user.id, product_id: batch.product_id, destination_warehouse_id: batch.destination_warehouse_id,
+          quantity: Number(batch.actual_qty), reason: req.body.reason } });
+      return approved;
+    });
+    res.json({ data: result, error: null });
+  }));
 
 // Reverse Adjustment: undoes a completed batch's physical stock effects — returns
 // consumed raw materials (IN) and removes the finished-goods output (OUT) — then flags
@@ -386,6 +464,7 @@ router.post('/batches/:id/reverse', requireRole('Admin', 'Production Manager'), 
     const batch = batchRows[0];
     if (!batch) throw new ApiError(404, 'Batch not found');
     if (batch.status !== 'completed') throw new ApiError(409, 'Only a completed batch can be reverse-adjusted');
+    if (batch.output_approval_status === 'pending') throw new ApiError(409, 'Decide the pending output approval before reversing this batch');
 
     const { rows: materials } = await client.query('SELECT * FROM production_batch_materials WHERE batch_id = $1', [batch.id]);
     for (const m of materials) {
@@ -399,7 +478,7 @@ router.post('/batches/:id/reverse', requireRole('Admin', 'Production Manager'), 
     // A 'failed'-QC batch never posted a stock receipt in the first place
     // (see /complete above) — nothing to reverse here, or this would
     // deduct stock that was never actually added.
-    if (batch.product_id && batch.destination_warehouse_id && batch.qc_status === 'passed' && Number(batch.actual_qty) > 0) {
+    if (outputWasPosted(batch)) {
       await postStockMovement(client, {
         productId: batch.product_id, warehouseId: batch.destination_warehouse_id, movementType: 'OUT', quantity: Number(batch.actual_qty),
         referenceType: 'adjustment', referenceId: batch.id, performedBy: req.user.id,
@@ -456,6 +535,8 @@ router.post('/bom', requireRole('Admin', 'Production Manager'), validate(schemas
         [bom.id, item.raw_material_product_id, item.quantity_per_unit]
       );
     }
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'bill_of_materials', entityId: bom.id,
+      newValue: { ...bom, items } });
     return bom;
   });
 

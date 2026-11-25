@@ -80,7 +80,7 @@ const stockMovementCreate = z.object({
   body: z.object({
     product_id: id,
     warehouse_id: id,
-    movement_type: z.enum(['IN', 'OUT', 'ADJUSTMENT']),
+    movement_type: z.enum(['IN', 'OUT']),
     quantity: qty,
     reference_type: z.enum(['purchase', 'production', 'sales', 'maintenance', 'transfer', 'adjustment']).optional(),
     reference_id: id.optional(),
@@ -96,6 +96,23 @@ const stockTransferCreate = z.object({
     quantity: qty,
     notes: z.string().optional().nullable()
   }).refine((b) => b.from_warehouse_id !== b.to_warehouse_id, { message: 'from_warehouse_id and to_warehouse_id must differ' })
+});
+
+const stockCountCreate = z.object({
+  body: z.object({
+    product_id: id,
+    warehouse_id: id,
+    counted_quantity: qtyNonNeg,
+    reason: z.string().trim().min(3).max(200),
+    notes: z.string().max(2000).optional().nullable()
+  })
+});
+
+const stockCountDecision = z.object({
+  body: z.object({
+    decision: z.enum(['approve', 'reject']),
+    reason: z.string().trim().min(3).max(500)
+  })
 });
 
 // ---- production ----
@@ -170,17 +187,21 @@ const batchComplete = z.object({
     actual_qty: qtyNonNeg,
     wastage_qty: qtyNonNeg.optional(),
     wastage_notes: z.string().optional().nullable(),
+    variance_notes: z.string().trim().max(1000).optional().nullable(),
     materials_warehouse_id: idOptional,
     materials: z.array(z.object({
       product_id: id,
       quantity_used: qty,
       warehouse_id: id
     })).optional(),
-    // QC sign-off decides whether this batch's output ever becomes real,
-    // loadable finished-goods stock — 'failed' completes the batch (for the
-    // record) but posts no stock receipt at all.
-    qc_status: z.enum(['pending', 'passed', 'failed'])
+    // QC must be resolved before completion. A passed batch still needs a
+    // separate approval before output enters inventory.
+    qc_status: z.enum(['passed', 'failed'])
   })
+});
+
+const productionOutputDecision = z.object({
+  body: z.object({ decision: z.enum(['approve', 'reject']), reason: z.string().trim().min(3).max(500) })
 });
 
 // ---- bill of materials ----
@@ -352,21 +373,31 @@ const routeReturnCreate = z.object({
 
 const exceptionCreate = z.object({
   body: z.object({
-    type: z.enum(['shortage', 'leakage', 'customer_dispute', 'wrong_delivery', 'missing_payment']),
+    type: z.enum(['shortage', 'leakage', 'customer_dispute', 'wrong_delivery', 'missing_payment', 'damaged_goods']),
     route_run_id: idOptional,
     route_stop_id: idOptional,
     truck_id: idOptional,
     payment_id: idOptional,
     description: z.string().optional().nullable(),
-    quantity: z.coerce.number().optional().nullable(),
+    quantity: z.coerce.number().positive().optional().nullable(),
     amount: money.optional().nullable()
+  }).superRefine((body, ctx) => {
+    if (body.type === 'damaged_goods') {
+      if (!body.route_run_id && !body.route_stop_id) ctx.addIssue({ code: 'custom', path: ['route_run_id'], message: 'Damaged goods must be linked to a route or route stop' });
+      if (!body.quantity) ctx.addIssue({ code: 'custom', path: ['quantity'], message: 'Enter the quantity damaged' });
+      if (!body.description?.trim()) ctx.addIssue({ code: 'custom', path: ['description'], message: 'Describe the damage and item' });
+    }
   })
 });
 
 const exceptionResolve = z.object({
   body: z.object({
-    resolution_notes: z.string().optional().nullable()
+    resolution_notes: z.string().trim().min(3).max(2000)
   })
+});
+
+const exceptionInvestigate = z.object({
+  body: z.object({ investigation_notes: z.string().trim().min(3).max(2000) })
 });
 
 const cashReconcile = z.object({
@@ -509,6 +540,15 @@ const truckLoadCreate = z.object({
   })
 });
 
+const truckLoadReconcile = z.object({
+  body: z.object({
+    actual_remaining: z.coerce.number().nonnegative().refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'Use no more than two decimal places'),
+    returned_liters: z.coerce.number().nonnegative().refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'Use no more than two decimal places').optional(),
+    reason: z.enum(['delivered_not_recorded', 'spillage', 'leakage', 'returned_to_warehouse', 'other']).optional(),
+    note: z.string().trim().max(1000).optional().nullable()
+  })
+});
+
 const paymentCreate = z.object({
   body: z.object({
     amount: qty,
@@ -630,14 +670,16 @@ const purchaseOrderUpdate = z.object({
 const receiveItem = z.object({
   purchase_item_id: id,
   quantity_received: qty,
-  condition: z.enum(['good', 'damaged']).optional()
+  condition: z.enum(['good', 'damaged', 'rejected']).optional(),
+  notes: z.string().max(500).optional().nullable()
 });
 
 const purchaseOrderReceive = z.object({
   body: z.object({
     items: z.array(receiveItem).min(1, 'At least one item is required'),
     warehouse_id: id,
-    notes: z.string().optional().nullable()
+    notes: z.string().optional().nullable(),
+    delivery_note_no: z.string().max(60).optional().nullable()
   })
 });
 
@@ -775,6 +817,40 @@ const supplierPaymentCreate = z.object({
   })
 });
 
+const supplierInvoiceCreate = z.object({
+  body: z.object({
+    purchase_order_id: id,
+    supplier_invoice_no: z.string().trim().min(1).max(80),
+    invoice_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+    subtotal: money,
+    total_amount: money,
+    notes: z.string().trim().max(2000).optional().nullable(),
+    lines: z.array(z.object({
+      purchase_item_id: id,
+      quantity: qty,
+      unit_price: money,
+      line_total: money
+    })).min(1).max(100)
+  })
+});
+
+const supplierInvoicePaymentCreate = z.object({
+  body: z.object({
+    amount: qty,
+    payment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+    method: z.enum(['cash', 'bank_transfer', 'cheque']),
+    bank_account_id: idOptional,
+    reference_number: z.string().trim().max(60).optional().nullable()
+  })
+});
+const supplierPaymentDecision = z.object({
+  body: z.object({
+    decision: z.enum(['approve', 'reject']),
+    comments: z.string().trim().max(2000).optional().nullable()
+  }).refine((v) => v.decision !== 'reject' || Boolean(v.comments?.trim()), 'A rejection reason is required')
+});
+
 const budgetCreate = z.object({
   body: z.object({
     account_id: id,
@@ -871,29 +947,36 @@ const supplierSelection = z.object({ body: z.object({ quotation_id: id, justific
 const lineProducts = z.object({ body: z.object({ mappings: z.array(z.object({ line_id: id, product_id: id })).min(1).max(100) }) });
 const poFromRequisition = z.object({ body: z.object({ expected_date: isoDate.optional().nullable(), notes: z.string().max(2000).optional().nullable() }) });
 
+// ---- procurement: material issuing (phase 3) ----
+const issueCreate = z.object({ body: z.object({
+  requisition_id: id, warehouse_id: id, notes: z.string().max(1000).optional().nullable(),
+  lines: z.array(z.object({ requisition_line_id: id, quantity: z.coerce.number().positive() })).min(1).max(100)
+}) });
+const issueConfirm = z.object({ body: z.object({ decision: z.enum(['confirm', 'dispute']), comments: z.string().trim().max(2000).optional().nullable() }) });
+
 module.exports = {
   login,
   productCreate, productUpdate, categoryCreate,
   warehouseCreate, warehouseUpdate,
-  stockMovementCreate, stockTransferCreate,
-  machineCreate, usageLogCreate, downtimeCreate, downtimeResolve, batchCreate, batchUpdate, batchComplete,
+  stockMovementCreate, stockTransferCreate, stockCountCreate, stockCountDecision,
+  machineCreate, usageLogCreate, downtimeCreate, downtimeResolve, batchCreate, batchUpdate, batchComplete, productionOutputDecision,
   salesOrderCreate, salesOrderUpdate, dispatchCreate, deliveryStatusUpdate, deliveryConfirm, paymentCreate, customerCreate, customerUpdate, truckCreate,
   quotationCreate, quotationUpdate, quotationConvert,
   costCenterCreate, costCenterUpdate, projectCreate, projectUpdate,
   vehicleExpenseCreate, machineCostCreate,
   routeRunCreate, routeRunUpdate, routeLoadCreate, routeReturnCreate,
-  exceptionCreate, exceptionResolve, cashReconcile, waterReconcile,
-  tankCreate, tankUpdate, tankMaintenanceCreate, truckLoadCreate,
+  exceptionCreate, exceptionResolve, exceptionInvestigate, cashReconcile, waterReconcile,
+  tankCreate, tankUpdate, tankMaintenanceCreate, truckLoadCreate, truckLoadReconcile,
   bomCreate,
   qaadeCreate, qaadeUpdate,
   supplierCreate, purchaseOrderCreate, purchaseOrderUpdate, purchaseOrderReceive, supplierPerformanceCreate,
   maintenanceScheduleCreate, maintenanceLogCreate,
   expenseCreate,
   coaAccountCreate, coaAccountUpdate, journalEntryCreate, journalEntryUpdate, cashEntryCreate, bankAccountCreate,
-  supplierPaymentCreate, budgetCreate, fiscalYearCreate,
+  supplierPaymentCreate, supplierInvoiceCreate, supplierInvoicePaymentCreate, supplierPaymentDecision, budgetCreate, fiscalYearCreate,
   reverseRequest,
   userCreate, userUpdate,
   restoreBackupConfirm,
   requisitionCreate, requisitionUpdate, requisitionDecision, requisitionAssign, requisitionCancel,
-  quotationRequest, quotationRecord, supplierSelection, lineProducts, poFromRequisition
+  quotationRequest, quotationRecord, supplierSelection, lineProducts, poFromRequisition, issueCreate, issueConfirm
 };

@@ -8,6 +8,7 @@ const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { postJournalEntry, getAccountByCode, reverseJournalEntry, resolveCostCenterId } = require('../services/accountingService');
 const { logAudit } = require('../services/auditService');
+const { nextRef, audit: procAudit } = require('../services/procurementService');
 
 const router = Router();
 
@@ -136,7 +137,7 @@ router.delete('/purchase-orders/:id', requireRole('Admin', 'Procurement Officer'
 // Receiving: records goods_receipts/items, bumps purchase_items.quantity_received,
 // posts stock IN, and rolls the PO status to partially_received or received.
 router.post('/purchase-orders/:id/receive', requireRole('Admin', 'Procurement Officer', 'Storekeeper'), validate(schemas.purchaseOrderReceive), asyncHandler(async (req, res) => {
-  const { items, warehouse_id, notes } = req.body; // items: [{ purchase_item_id, quantity_received, condition }]
+  const { items, warehouse_id, notes, delivery_note_no } = req.body; // items: [{ purchase_item_id, quantity_received, condition }]
 
   const result = await withTransaction(async (client) => {
     const { rows: poRows } = await client.query('SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.id]);
@@ -147,8 +148,8 @@ router.post('/purchase-orders/:id/receive', requireRole('Admin', 'Procurement Of
     }
 
     const { rows: receiptRows } = await client.query(
-      `INSERT INTO goods_receipts (purchase_order_id, received_by, warehouse_id, notes) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [po.id, req.user.id, warehouse_id, notes || null]
+      `INSERT INTO goods_receipts (purchase_order_id, received_by, warehouse_id, notes, grn_number, delivery_note_no) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [po.id, req.user.id, warehouse_id, notes || null, await nextRef(client, 'GRN'), delivery_note_no || null]
     );
     const receipt = receiptRows[0];
 
@@ -166,27 +167,34 @@ router.post('/purchase-orders/:id/receive', requireRole('Admin', 'Procurement Of
       const purchaseItem = piRows[0];
       if (!purchaseItem) throw new ApiError(400, `purchase_item_id ${item.purchase_item_id} does not belong to this PO`);
 
+      const cond = item.condition || 'good';
+      const qty = Number(item.quantity_received);
+      if (cond === 'good' && Number(purchaseItem.quantity_accepted) + qty > Number(purchaseItem.quantity_ordered) + 1e-9) {
+        throw new ApiError(409, `Cannot accept ${qty}: only ${Number(purchaseItem.quantity_ordered) - Number(purchaseItem.quantity_accepted)} still outstanding on this line (over-receipt blocked)`);
+      }
+      if (cond !== 'good' && !(item.notes && String(item.notes).trim())) throw new ApiError(400, 'A note describing the damage/rejection is required');
       await client.query(
-        `INSERT INTO goods_receipt_items (goods_receipt_id, purchase_item_id, quantity_received, condition) VALUES ($1,$2,$3,$4)`,
-        [receipt.id, item.purchase_item_id, item.quantity_received, item.condition || 'good']
+        `INSERT INTO goods_receipt_items (goods_receipt_id, purchase_item_id, quantity_received, condition, notes) VALUES ($1,$2,$3,$4,$5)`,
+        [receipt.id, item.purchase_item_id, qty, cond, item.notes || null]
       );
       await client.query(
-        `UPDATE purchase_items SET quantity_received = quantity_received + $1 WHERE id = $2`,
-        [item.quantity_received, item.purchase_item_id]
+        `UPDATE purchase_items SET quantity_received = quantity_received + $1,
+                quantity_accepted = quantity_accepted + $2, quantity_rejected = quantity_rejected + $3 WHERE id = $4`,
+        [qty, cond === 'good' ? qty : 0, cond === 'good' ? 0 : qty, item.purchase_item_id]
       );
-      if (item.condition !== 'damaged') {
+      if (cond === 'good') {
         await postStockMovement(client, {
-          productId: purchaseItem.product_id, warehouseId: warehouse_id, movementType: 'IN', quantity: item.quantity_received,
-          referenceType: 'purchase', referenceId: po.id, performedBy: req.user.id, notes: `GRN against ${po.po_number}`
+          productId: purchaseItem.product_id, warehouseId: warehouse_id, movementType: 'IN', quantity: qty,
+          referenceType: 'purchase', referenceId: po.id, performedBy: req.user.id, notes: `${receipt.grn_number} against ${po.po_number}`
         });
         const acctCode = INVENTORY_ACCOUNT_CODE[purchaseItem.product_type];
-        const value = Number(item.quantity_received) * Number(purchaseItem.unit_cost);
+        const value = qty * Number(purchaseItem.unit_cost);
         inventoryValueByAccountCode[acctCode] = (inventoryValueByAccountCode[acctCode] || 0) + value;
       }
     }
 
-    const { rows: allItems } = await client.query('SELECT quantity_ordered, quantity_received FROM purchase_items WHERE purchase_order_id = $1', [po.id]);
-    const fullyReceived = allItems.every((i) => Number(i.quantity_received) >= Number(i.quantity_ordered));
+    const { rows: allItems } = await client.query('SELECT quantity_ordered, quantity_received, quantity_accepted FROM purchase_items WHERE purchase_order_id = $1', [po.id]);
+    const fullyReceived = allItems.every((i) => Number(i.quantity_accepted) >= Number(i.quantity_ordered));
     const partiallyReceived = allItems.some((i) => Number(i.quantity_received) > 0);
     const newStatus = fullyReceived ? 'received' : partiallyReceived ? 'partially_received' : po.status;
     await client.query('UPDATE purchase_orders SET status = $1 WHERE id = $2', [newStatus, po.id]);
@@ -207,6 +215,11 @@ router.post('/purchase-orders/:id/receive', requireRole('Admin', 'Procurement Of
       });
     }
 
+    if (newStatus === 'received' && po.requisition_id) {
+      await client.query(`UPDATE purchase_requisitions SET status = 'fulfilled', updated_at = now() WHERE id = $1 AND status = 'po_issued'`, [po.requisition_id]);
+    }
+    await procAudit(client, { entityType: 'purchase_order', entityId: po.id, action: 'receive', user: req.user, newValue: { grn: receipt.grn_number, status: newStatus, lines: items.length } });
+
     return { ...receipt, status: newStatus };
   });
 
@@ -224,7 +237,7 @@ router.post('/purchase-orders/:id/reverse', requireRole('Admin', 'Procurement Of
     const { rows: poRows } = await client.query('SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.id]);
     const po = poRows[0];
     if (!po) throw new ApiError(404, 'Purchase order not found');
-    if (['draft', 'sent'].includes(po.status)) throw new ApiError(409, 'This PO has not posted to the ledger yet — delete it instead of reversing it.');
+    if (['draft', 'pending_authorization', 'authorized', 'sent'].includes(po.status)) throw new ApiError(409, 'This PO has not posted to the ledger yet — delete it instead of reversing it.');
     if (po.status === 'reversed' || po.status === 'cancelled') throw new ApiError(409, `PO is already ${po.status}`);
 
     const { rows: paidRows } = await client.query(
@@ -282,48 +295,10 @@ router.get('/purchase-orders/:id/payments', requireRole(...PERM.PROCUREMENT_VIEW
   res.json({ data: rows, error: null });
 }));
 
-// "Payment sending" — the AP mirror of the customer-side payment receiving workflow:
-// settle part or all of a supplier's outstanding balance on a received PO.
-router.post('/purchase-orders/:id/payments', requireRole('Admin', 'Procurement Officer', 'Finance Officer'), validate(schemas.supplierPaymentCreate), asyncHandler(async (req, res) => {
-  const { amount, payment_date, method, bank_account_id, reference_number } = req.body;
-
-  const result = await withTransaction(async (client) => {
-    const { rows: poRows } = await client.query('SELECT * FROM purchase_orders WHERE id = $1', [req.params.id]);
-    const po = poRows[0];
-    if (!po) throw new ApiError(404, 'Purchase order not found');
-
-    const { rows: payRows } = await client.query(
-      `INSERT INTO supplier_payments (purchase_order_id, amount, payment_date, method, bank_account_id, reference_number, recorded_by)
-       VALUES ($1,$2,COALESCE($3, CURRENT_DATE),$4,$5,$6,$7) RETURNING *`,
-      [po.id, amount, payment_date || null, method, bank_account_id || null, reference_number || null, req.user.id]
-    );
-    const payment = payRows[0];
-
-    const apAcct = await getAccountByCode(client, '2000');
-    let cashOrBankAcct;
-    if (method === 'cash') {
-      cashOrBankAcct = (await getAccountByCode(client, '1000')).id;
-    } else if (bank_account_id) {
-      const { rows } = await client.query('SELECT coa_account_id FROM bank_accounts WHERE id = $1', [bank_account_id]);
-      cashOrBankAcct = rows[0] ? rows[0].coa_account_id : (await getAccountByCode(client, '1010')).id;
-    } else {
-      cashOrBankAcct = (await getAccountByCode(client, '1010')).id;
-    }
-
-    await postJournalEntry(client, {
-      entryDate: payment.payment_date, description: `Payment to supplier - ${po.po_number}`,
-      source: 'system', referenceType: 'supplier_payment', referenceId: payment.id, createdBy: req.user.id,
-      lines: [
-        { accountId: apAcct.id, debit: amount, credit: 0, supplierId: po.supplier_id, costCenterId: po.cost_center_id, projectId: po.project_id },
-        { accountId: cashOrBankAcct, debit: 0, credit: amount, costCenterId: po.cost_center_id, projectId: po.project_id }
-      ]
-    });
-
-    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'supplier_payment', entityId: payment.id, newValue: payment });
-    return payment;
-  });
-
-  res.status(201).json({ data: result, error: null });
+// Direct PO payments bypass invoice matching and voucher controls. Keep this
+// legacy URL explicit but closed; payments must reference an approved invoice.
+router.post('/purchase-orders/:id/payments', requireRole('Admin', 'Finance Officer'), asyncHandler(async () => {
+  throw new ApiError(409, 'Register and approve the supplier invoice, then pay it from Procurement → Supplier Invoices & Vouchers.');
 }));
 
 // Reverse a payment sent to a supplier: posts an offsetting entry that reinstates the
@@ -351,9 +326,18 @@ router.post('/purchase-orders/:poId/payments/:paymentId/reverse', requireRole('A
     });
 
     const { rows: voided } = await client.query(
-      `UPDATE supplier_payments SET voided_at = now(), voided_by = $1, void_reason = $2 WHERE id = $3 RETURNING *`,
+      `UPDATE supplier_payments SET voided_at = now(), voided_by = $1, void_reason = $2, status = 'voided' WHERE id = $3 RETURNING *`,
       [req.user.id, reason || null, payment.id]
     );
+    if (payment.supplier_invoice_id) {
+      const paid = Number((await client.query(
+        "SELECT COALESCE(SUM(amount),0) AS amount FROM supplier_payments WHERE supplier_invoice_id=$1 AND status='approved' AND voided_at IS NULL",
+        [payment.supplier_invoice_id]
+      )).rows[0].amount);
+      const invoice = (await client.query('SELECT total_amount FROM supplier_invoices WHERE id=$1 FOR UPDATE', [payment.supplier_invoice_id])).rows[0];
+      const invoiceStatus = paid <= 0.005 ? 'approved' : paid + 0.01 >= Number(invoice.total_amount) ? 'paid' : 'partially_paid';
+      await client.query('UPDATE supplier_invoices SET status=$1 WHERE id=$2', [invoiceStatus, payment.supplier_invoice_id]);
+    }
     await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'supplier_payment', entityId: payment.id, oldValue: payment, newValue: voided[0] });
     return voided[0];
   });

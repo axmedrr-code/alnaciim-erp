@@ -39,6 +39,10 @@ const billingRoutes = require('./routes/billing.routes');
 const retailRoutes = require('./routes/retail.routes');
 const requisitionRoutes = require('./routes/requisitions.routes');
 const sourcingRoutes = require('./routes/sourcing.routes');
+const issuingRoutes = require('./routes/issuing.routes');
+const supplierInvoicesRoutes = require('./routes/supplier-invoices.routes');
+const operationsRoutes = require('./routes/operations.routes');
+const logisticsRoutes = require('./routes/logistics.routes');
 
 // Fail fast on missing required configuration (names only — values are never logged).
 const missing = ['JWT_SECRET'].concat(isHostedEnv() ? ['DATABASE_URL'] : []).filter((k) => !process.env[k]);
@@ -111,6 +115,10 @@ v1.use('/production', productionRoutes);
 v1.use('/sales', salesRoutes);
 v1.use('/customers', customersRoutes);
 v1.use('/procurement/requisitions', requisitionRoutes);
+v1.use('/procurement/issues', issuingRoutes);
+v1.use('/procurement/supplier-invoices', supplierInvoicesRoutes);
+v1.use('/operations', operationsRoutes);
+v1.use('/logistics', logisticsRoutes);
 v1.use('/procurement', sourcingRoutes);
 v1.use('/procurement', procurementRoutes);
 v1.use('/suppliers', suppliersRoutes);

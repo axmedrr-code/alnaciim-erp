@@ -76,6 +76,9 @@ function visibilitySql(user, params, alias = 'pr') {
   if (user.role === 'Finance Officer') {
     return `(${own} OR ${alias}.status IN (${POST_APPROVAL.map((s) => `'${s}'`).join(',')}))`;
   }
+  if (user.role === 'Storekeeper' || user.role === 'Inventory Manager') {
+    return `(${own} OR ${alias}.status IN ('po_issued','fulfilled'))`;
+  }
   return own;
 }
 

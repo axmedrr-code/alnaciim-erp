@@ -3,12 +3,15 @@ import { useApi } from '../../components/useApi';
 import Table from '../../components/Table';
 import client from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { canSee } from '../../utils/permissions';
 
 const EMPTY_FORM = { sku: '', name: '', category_id: '', product_type: 'raw_material', unit: 'pcs', unit_cost: '', unit_price: '', reorder_level: '', reorder_qty: '' };
 
 export default function ProductsTab() {
   const { user } = useAuth();
   const canEdit = ['Admin', 'Inventory Manager'].includes(user?.role);
+  const canViewCost = canSee(user?.role, 'PRODUCT_COST_VIEW');
+  const canViewPrice = canSee(user?.role, 'PRODUCT_PRICE_VIEW');
   const [search, setSearch] = useState('');
   const [type, setType] = useState('');
   const { rows, reload } = useApi(`/products?search=${search}&type=${type}`, [search, type]);
@@ -78,10 +81,10 @@ export default function ProductsTab() {
             { key: 'category_name', header: 'Category' },
             { key: 'product_type', header: 'Type' },
             { key: 'unit', header: 'Unit' },
-            { key: 'unit_cost', header: 'Cost', render: (r) => `$${Number(r.unit_cost).toFixed(2)}` },
-            { key: 'unit_price', header: 'Price', render: (r) => `$${Number(r.unit_price).toFixed(2)}` },
+            canViewCost && { key: 'unit_cost', header: 'Cost', render: (r) => `$${Number(r.unit_cost).toFixed(2)}` },
+            canViewPrice && { key: 'unit_price', header: 'Price', render: (r) => `$${Number(r.unit_price).toFixed(2)}` },
             { key: 'reorder_level', header: 'Reorder Level' }
-          ]}
+          ].filter(Boolean)}
           rows={rows}
         />
       </div>

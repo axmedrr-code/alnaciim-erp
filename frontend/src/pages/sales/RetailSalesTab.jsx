@@ -1,4 +1,4 @@
-import { useState, createContext, useContext } from 'react';
+import { useState, useEffect, createContext, useContext } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import {
   ShoppingCart, ListOrdered, Wallet, FileText, BarChart3, Building2,
@@ -28,7 +28,7 @@ const RetailDeptContext = createContext(['bottled_water', () => {}]);
 function useRetailDept() { return useContext(RetailDeptContext); }
 
 async function openInvoice(orderId) {
-  const res = await client.get(`/sales/orders/${orderId}/invoice`, { responseType: 'blob' });
+  const res = await client.get(`/retail/sales/${orderId}/invoice`, { responseType: 'blob' });
   const url = URL.createObjectURL(res.data);
   window.open(url, '_blank');
 }
@@ -41,11 +41,20 @@ function SalesScreenTab() {
   const { user } = useAuth();
   const canSell = RECORD_SALE_ROLES.includes(user?.role);
   const [department] = useRetailDept();
-  const { rows: customers } = useApi('/customers');
   const { rows: products } = useApi(`/retail/products?department=${department}`, [department]);
-  const { rows: warehouses } = useApi('/warehouses');
+  const { rows: warehouses } = useApi(`/retail/warehouses?department=${department}`, [department]);
 
   const [customerId, setCustomerId] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [debouncedCustomerSearch, setDebouncedCustomerSearch] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedCustomerSearch(customerSearch.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [customerSearch]);
+  const customerLookupUrl = debouncedCustomerSearch.length >= 2
+    ? `/retail/customers/search?q=${encodeURIComponent(debouncedCustomerSearch)}` : null;
+  const { rows: customerResults, loading: customersLoading } = useApi(customerLookupUrl, [customerLookupUrl]);
   const [warehouseId, setWarehouseId] = useState('');
   const [items, setItems] = useState([{ product_id: '', quantity: '', unit_price: '', discount: '' }]);
   const [orderDiscount, setOrderDiscount] = useState('');
@@ -104,10 +113,35 @@ function SalesScreenTab() {
           <div className="form-grid">
             <div className="form-field span-2">
               <label>Customer</label>
-              <select required value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-                <option value="">Select…</option>
-                {customers?.map((c) => <option key={c.id} value={c.id}>{c.name}{c.hno ? ` — ${c.hno}` : ''}</option>)}
-              </select>
+              <div className="quick-search" style={{ maxWidth: 'none' }}>
+                {selectedCustomer ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, minHeight: 38, padding: '0 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)' }}>
+                    <span>{selectedCustomer.name}{selectedCustomer.hno ? ` — ${selectedCustomer.hno}` : ''}{selectedCustomer.phone ? ` · ${selectedCustomer.phone}` : ''}</span>
+                    <button type="button" className="secondary" onClick={() => {
+                      setSelectedCustomer(null); setCustomerId(''); setCustomerSearch(''); setDebouncedCustomerSearch('');
+                    }}>Change</button>
+                  </div>
+                ) : <input
+                  required
+                  autoComplete="off"
+                  placeholder="Search by HNO, name, or phone…"
+                  value={customerSearch}
+                  onChange={(e) => { setCustomerId(''); setCustomerSearch(e.target.value); }}
+                />}
+                {!selectedCustomer && customerSearch.trim().length >= 2 && (
+                  <div className="quick-search__dropdown">
+                    {customersLoading ? <div className="quick-search__empty">Searching customers…</div>
+                      : customerResults?.length ? customerResults.map((c) => (
+                        <button key={c.id} type="button" className="quick-search__item" onClick={() => {
+                          setCustomerId(String(c.id)); setSelectedCustomer(c); setCustomerSearch('');
+                        }}>
+                          <span>{c.name}{c.hno ? ` — ${c.hno}` : ''}{c.phone ? ` · ${c.phone}` : ''}</span>
+                        </button>
+                      )) : <div className="quick-search__empty">No customers found</div>}
+                  </div>
+                )}
+              </div>
+              {selectedCustomer && <div className="muted" style={{ marginTop: 5 }}>Selected customer</div>}
             </div>
             <div className="form-field">
               <label>Warehouse</label>
@@ -376,7 +410,7 @@ function CustomerStatementTab() {
   const [results, setResults] = useState(null);
   const [selected, setSelected] = useState(null);
   const { rows: profile } = useApi(selected ? `/retail/customers/${selected.id}/profile?department=${department}` : null, [selected, department]);
-  const { rows: statement } = useApi(selected ? `/customers/${selected.id}/statement` : null, [selected]);
+  const { rows: statement } = useApi(selected ? `/retail/customers/${selected.id}/statement` : null, [selected]);
 
   async function search(e) {
     e.preventDefault();

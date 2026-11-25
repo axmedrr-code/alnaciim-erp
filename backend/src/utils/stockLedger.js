@@ -11,13 +11,17 @@ const OUT_TYPES = new Set(['OUT', 'TRANSFER_OUT']);
 async function postStockMovement(client, {
   productId, warehouseId, movementType, quantity, referenceType = null,
   referenceId = null, relatedWarehouseId = null, performedBy, notes = null,
-  allowNegative = false
+  allowNegative = false, adjustmentDelta = null
 }) {
   if (quantity <= 0) throw new ApiError(400, 'Movement quantity must be positive');
 
   let delta = quantity;
   if (OUT_TYPES.has(movementType)) delta = -quantity;
-  else if (movementType === 'ADJUSTMENT') delta = quantity; // caller passes signed intent via quantity sign upstream if needed
+  else if (movementType === 'ADJUSTMENT') {
+    if (!Number.isFinite(Number(adjustmentDelta)) || Number(adjustmentDelta) === 0 || Math.abs(Math.abs(Number(adjustmentDelta)) - quantity) > 0.0005)
+      throw new ApiError(400, 'A stock adjustment requires a signed delta whose absolute value equals the movement quantity');
+    delta = Number(adjustmentDelta);
+  }
   else if (!IN_TYPES.has(movementType)) throw new ApiError(400, `Unknown movement_type: ${movementType}`);
 
   const { rows } = await client.query(

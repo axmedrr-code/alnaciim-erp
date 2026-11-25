@@ -29,7 +29,7 @@ docker run -d --name alnaciim_pg \
 cd backend
 cp .env.example .env      # adjust DATABASE_URL / JWT_SECRET if needed
 npm install
-npm run migrate           # applies database/schema.sql
+npm run migrate -- --bootstrap-empty # initializes only a completely empty database
 npm run seed               # loads database/seed.sql sample data
 npm run dev                 # starts the API on http://localhost:4000
 ```

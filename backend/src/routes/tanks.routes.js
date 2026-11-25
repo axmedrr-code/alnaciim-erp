@@ -1,13 +1,15 @@
 const { Router } = require('express');
-const { pool } = require('../config/db');
+const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
+const { PERM } = require('../middleware/permissions');
+const { logAudit } = require('../services/auditService');
 
 const router = Router();
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', requireRole(...PERM.TANK_VIEW), asyncHandler(async (req, res) => {
   const { customer_id, status, search } = req.query;
   const conditions = [];
   const params = [];
@@ -37,7 +39,7 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', requireRole(...PERM.TANK_VIEW), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT t.*, c.name AS customer_name FROM customer_tanks t JOIN customers c ON c.id = t.customer_id WHERE t.id = $1`,
     [req.params.id]
@@ -48,12 +50,16 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
 router.post('/', requireRole('Admin', 'Sales Manager'), validate(schemas.tankCreate), asyncHandler(async (req, res) => {
   const { tank_code, tank_name, customer_id, tank_type, capacity_liters, barcode, location, installed_date, notes } = req.body;
-  const { rows } = await pool.query(
-    `INSERT INTO customer_tanks (tank_code, tank_name, customer_id, tank_type, capacity_liters, barcode, location, installed_date, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-    [tank_code, tank_name || null, customer_id, tank_type, capacity_liters, barcode || null, location || null, installed_date || null, notes || null]
-  );
-  res.status(201).json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO customer_tanks (tank_code, tank_name, customer_id, tank_type, capacity_liters, barcode, location, installed_date, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [tank_code, tank_name || null, customer_id, tank_type, capacity_liters, barcode || null, location || null, installed_date || null, notes || null]
+    );
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'customer_tank', entityId: rows[0].id, newValue: rows[0] });
+    return rows[0];
+  });
+  res.status(201).json({ data: result, error: null });
 }));
 
 router.put('/:id', requireRole('Admin', 'Sales Manager'), validate(schemas.tankUpdate), asyncHandler(async (req, res) => {
@@ -63,17 +69,23 @@ router.put('/:id', requireRole('Admin', 'Sales Manager'), validate(schemas.tankU
   for (const f of fields) {
     if (req.body[f] !== undefined) { params.push(req.body[f]); updates.push(`${f} = $${params.length}`); }
   }
+  if (!updates.length) throw new ApiError(400, 'No fields to update');
   params.push(req.params.id);
-  const { rows } = await pool.query(
-    `UPDATE customer_tanks SET ${updates.join(', ')} WHERE id = $${params.length} RETURNING *`,
-    params
-  );
-  if (!rows[0]) throw new ApiError(404, 'Tank not found');
-  res.json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const before = (await client.query('SELECT * FROM customer_tanks WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+    if (!before) throw new ApiError(404, 'Tank not found');
+    const { rows } = await client.query(
+      `UPDATE customer_tanks SET ${updates.join(', ')} WHERE id = $${params.length} RETURNING *`,
+      params
+    );
+    await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'customer_tank', entityId: rows[0].id, oldValue: before, newValue: rows[0] });
+    return rows[0];
+  });
+  res.json({ data: result, error: null });
 }));
 
 // Merged refill (delivery) + maintenance history for a tank, newest first.
-router.get('/:id/history', asyncHandler(async (req, res) => {
+router.get('/:id/history', requireRole(...PERM.TANK_VIEW), asyncHandler(async (req, res) => {
   const { rows: tankRows } = await pool.query('SELECT * FROM customer_tanks WHERE id = $1', [req.params.id]);
   if (!tankRows[0]) throw new ApiError(404, 'Tank not found');
 
@@ -103,12 +115,16 @@ router.get('/:id/history', asyncHandler(async (req, res) => {
 
 router.post('/:id/maintenance', requireRole('Admin', 'Technician', 'Sales Manager'), validate(schemas.tankMaintenanceCreate), asyncHandler(async (req, res) => {
   const { log_date, description, cost } = req.body;
-  const { rows } = await pool.query(
-    `INSERT INTO tank_maintenance_logs (tank_id, log_date, description, performed_by, cost)
-     VALUES ($1, COALESCE($2, CURRENT_DATE), $3, $4, $5) RETURNING *`,
-    [req.params.id, log_date || null, description || null, req.user.id, cost || 0]
-  );
-  res.status(201).json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO tank_maintenance_logs (tank_id, log_date, description, performed_by, cost)
+       VALUES ($1, COALESCE($2, CURRENT_DATE), $3, $4, $5) RETURNING *`,
+      [req.params.id, log_date || null, description || null, req.user.id, cost || 0]
+    );
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'tank_maintenance_log', entityId: rows[0].id, newValue: rows[0] });
+    return rows[0];
+  });
+  res.status(201).json({ data: result, error: null });
 }));
 
 module.exports = router;

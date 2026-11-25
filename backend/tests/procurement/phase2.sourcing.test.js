@@ -1,10 +1,9 @@
 // Procurement Phase 2 (sourcing, quotations, PO authorization) - end-to-end API tests against a DATABASE THAT HAS migration 026 applied.
 //
-//   node backend/tests/procurement/phase2.sourcing.test.js            (reads DATABASE_URL/DATABASE_SSL from the environment)
+//   TEST_DATABASE_URL=... node backend/tests/procurement/phase2.sourcing.test.js
 //
 // It starts the real backend on a free port with a throwaway JWT secret, creates its own role accounts (@alnaciim.test),
-// and only ever inserts new rows (requisitions, approvals, audit, test users). It refuses to run unless the target database
-// host is neon.tech (TEST) or localhost. Passwords are never used: tokens are minted for the throwaway local process.
+// and only ever inserts test rows. It requires a dedicated TEST_DATABASE_URL whose database name contains "test".
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -13,10 +12,16 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 
-const DB = process.env.DATABASE_URL;
-const host = new URL(DB).hostname.toLowerCase();
-if (!(host.endsWith('.neon.tech') || host === 'localhost')) { console.log('refusing: database host must be neon.tech (TEST) or localhost'); process.exit(1); }
-const SSL = process.env.DATABASE_SSL === 'true';
+const DB = process.env.TEST_DATABASE_URL;
+if (!DB) { console.log('refusing: set TEST_DATABASE_URL to an isolated test database'); process.exit(1); }
+const parsedDbUrl = new URL(DB);
+const host = parsedDbUrl.hostname.toLowerCase();
+const dbName = decodeURIComponent(parsedDbUrl.pathname.replace(/^\/+/, '')).toLowerCase();
+if (!(host.endsWith('.neon.tech') || host === 'localhost' || host === '127.0.0.1') || !(/(^|[-_])test($|[-_])/.test(dbName) || (process.env.TEST_DATABASE_EXPECT_HOST && process.env.TEST_DATABASE_EXPECT_HOST.toLowerCase() === host))) {
+  console.log('refusing: TEST_DATABASE_URL must point to localhost or Neon and the database name must include a test suffix');
+  process.exit(1);
+}
+const SSL = process.env.TEST_DATABASE_SSL === 'true';
 const SECRET = crypto.randomBytes(24).toString('hex');
 const PORT = 4900 + Math.floor(Math.random() * 90);
 let pass = 0, total = 0;

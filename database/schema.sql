@@ -652,6 +652,53 @@ CREATE TABLE chart_of_accounts (
 
 CREATE INDEX idx_coa_type ON chart_of_accounts(account_type);
 
+CREATE OR REPLACE FUNCTION prevent_chart_account_parent_cycle()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE creates_cycle BOOLEAN;
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF NEW.parent_id IS NOT DISTINCT FROM OLD.parent_id THEN
+            RETURN NEW;
+        END IF;
+    END IF;
+    PERFORM pg_advisory_xact_lock(704301, 36);
+    IF NEW.parent_id IS NULL THEN RETURN NEW; END IF;
+    IF NEW.parent_id = NEW.id THEN
+        RAISE EXCEPTION 'An account cannot be its own parent' USING ERRCODE = '23514';
+    END IF;
+    WITH RECURSIVE descendants(id) AS (
+        SELECT id FROM chart_of_accounts WHERE parent_id = NEW.id
+        UNION
+        SELECT account.id FROM chart_of_accounts account JOIN descendants d ON account.parent_id = d.id
+    )
+    SELECT EXISTS (SELECT 1 FROM descendants WHERE id = NEW.parent_id) INTO creates_cycle;
+    IF creates_cycle THEN
+        RAISE EXCEPTION 'An account cannot use one of its descendants as its parent' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER trg_chart_account_parent_cycle
+    BEFORE INSERT OR UPDATE OF parent_id ON chart_of_accounts
+    FOR EACH ROW EXECUTE FUNCTION prevent_chart_account_parent_cycle();
+
+CREATE OR REPLACE FUNCTION prevent_system_account_deactivation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.is_system AND OLD.is_active AND NOT NEW.is_active THEN
+        RAISE EXCEPTION 'System accounts cannot be deactivated' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER trg_protect_system_account_active
+    BEFORE UPDATE OF is_active ON chart_of_accounts
+    FOR EACH ROW EXECUTE FUNCTION prevent_system_account_deactivation();
+
 CREATE TABLE fiscal_years (
     id          SERIAL PRIMARY KEY,
     name        VARCHAR(50) UNIQUE NOT NULL,
@@ -785,6 +832,9 @@ ALTER TABLE journal_entries
     ADD COLUMN is_reversal       BOOLEAN NOT NULL DEFAULT false;
 
 CREATE INDEX idx_journal_entries_reverses ON journal_entries(reverses_entry_id);
+CREATE UNIQUE INDEX uq_journal_entries_single_reversal
+    ON journal_entries(reverses_entry_id)
+    WHERE reverses_entry_id IS NOT NULL;
 
 -- =====================================================================
 -- ENTERPRISE BILLING & COST ACCOUNTING (see migrations/008_billing_cost_accounting.sql)
@@ -1083,7 +1133,7 @@ CREATE INDEX idx_route_returns_run ON route_returns(route_run_id);
 CREATE TABLE exceptions (
     id             SERIAL PRIMARY KEY,
     type           VARCHAR(20) NOT NULL
-                      CHECK (type IN ('shortage','leakage','customer_dispute','wrong_delivery','missing_payment')),
+                      CHECK (type IN ('shortage','leakage','customer_dispute','wrong_delivery','missing_payment','damaged_goods')),
     route_run_id   INT REFERENCES route_runs(id),
     route_stop_id  INT REFERENCES route_stops(id),
     truck_id       INT REFERENCES trucks(id),
@@ -1095,11 +1145,14 @@ CREATE TABLE exceptions (
     raised_by      INT NOT NULL REFERENCES users(id),
     resolved_by    INT REFERENCES users(id),
     resolved_at    TIMESTAMPTZ,
+    resolution_notes TEXT,
+    investigation_notes TEXT,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_exceptions_route_run ON exceptions(route_run_id);
 CREATE INDEX idx_exceptions_status ON exceptions(status);
+CREATE INDEX idx_exceptions_type_created ON exceptions(type, created_at DESC);
 
 ALTER TABLE audit_logs ADD COLUMN device_id VARCHAR(100);
 ALTER TABLE audit_logs ADD COLUMN gps_lat NUMERIC(9,6);
@@ -1231,6 +1284,7 @@ CREATE TABLE stock_reconciliations (
     truck_load_id      INT NOT NULL REFERENCES truck_loads(id),
     previous_remaining NUMERIC(12,2) NOT NULL,
     actual_remaining   NUMERIC(12,2) NOT NULL,
+    returned_liters    NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (returned_liters >= 0),
     difference         NUMERIC(12,2) NOT NULL,
     reason             VARCHAR(30) CHECK (reason IN (
                           'delivered_not_recorded', 'spillage', 'leakage', 'returned_to_warehouse', 'other'
@@ -1461,3 +1515,139 @@ ALTER TABLE procurement_approvals ADD CONSTRAINT procurement_approvals_step_chec
 
 -- 028: widen purchase_orders.status for pending_authorization
 ALTER TABLE purchase_orders ALTER COLUMN status TYPE VARCHAR(30);
+
+-- 029: Procurement Phase 3 (receiving + issuing)
+ALTER TABLE goods_receipts ADD COLUMN grn_number VARCHAR(20) UNIQUE;
+ALTER TABLE goods_receipts ADD COLUMN delivery_note_no VARCHAR(60);
+
+ALTER TABLE goods_receipt_items DROP CONSTRAINT goods_receipt_items_condition_check;
+ALTER TABLE goods_receipt_items ADD CONSTRAINT goods_receipt_items_condition_check CHECK (condition IN ('good','damaged','rejected'));
+ALTER TABLE goods_receipt_items ADD COLUMN notes TEXT;
+
+-- quantity_received = physically delivered; quantity_accepted = good units that entered stock (drives PO fulfilment and the AP credit).
+ALTER TABLE purchase_items ADD COLUMN quantity_accepted NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (quantity_accepted >= 0);
+ALTER TABLE purchase_items ADD COLUMN quantity_rejected NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (quantity_rejected >= 0);
+UPDATE purchase_items pi SET
+  quantity_accepted = COALESCE((SELECT SUM(g.quantity_received) FROM goods_receipt_items g WHERE g.purchase_item_id = pi.id AND g.condition = 'good'), 0),
+  quantity_rejected = COALESCE((SELECT SUM(g.quantity_received) FROM goods_receipt_items g WHERE g.purchase_item_id = pi.id AND g.condition <> 'good'), 0);
+
+ALTER TABLE stock_movements DROP CONSTRAINT stock_movements_reference_type_check;
+ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_reference_type_check
+  CHECK (reference_type IN ('purchase','production','sales','maintenance','transfer','adjustment','tanker_load','issue'));
+
+-- Controlled stock reconciliation (migration 031).
+CREATE TABLE IF NOT EXISTS inventory_stock_counts (
+  id SERIAL PRIMARY KEY,
+  count_number VARCHAR(30) UNIQUE,
+  product_id INT NOT NULL REFERENCES products(id),
+  warehouse_id INT NOT NULL REFERENCES warehouses(id),
+  system_quantity NUMERIC(14,3) NOT NULL CHECK (system_quantity >= 0),
+  counted_quantity NUMERIC(14,3) NOT NULL CHECK (counted_quantity >= 0),
+  variance NUMERIC(14,3) NOT NULL,
+  reason VARCHAR(200) NOT NULL,
+  notes TEXT,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+  counted_by INT NOT NULL REFERENCES users(id),
+  decided_by INT REFERENCES users(id),
+  decision_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_at TIMESTAMPTZ,
+  CHECK (variance = counted_quantity - system_quantity)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_stock_counts_one_pending ON inventory_stock_counts(product_id, warehouse_id) WHERE status='pending';
+CREATE INDEX IF NOT EXISTS idx_inventory_stock_counts_created ON inventory_stock_counts(created_at DESC);
+
+-- Production output approval (migration 032). Historical rows are not replayed.
+ALTER TABLE production_batches
+  ADD COLUMN output_approval_status VARCHAR(20) NOT NULL DEFAULT 'legacy'
+    CHECK (output_approval_status IN ('legacy','not_required','pending','approved','rejected')),
+  ADD COLUMN output_approved_by INT REFERENCES users(id),
+  ADD COLUMN output_approved_at TIMESTAMPTZ,
+  ADD COLUMN output_decision_reason TEXT,
+  ADD COLUMN completed_by INT REFERENCES users(id),
+  ADD COLUMN variance_notes TEXT;
+CREATE INDEX idx_production_batches_output_approval ON production_batches(output_approval_status, end_time DESC);
+
+-- Materials issued from a warehouse to the requesting department; the department must confirm what it actually got.
+CREATE TABLE material_issues (
+    id              SERIAL PRIMARY KEY,
+    issue_number    VARCHAR(20) UNIQUE NOT NULL,
+    requisition_id  INT NOT NULL REFERENCES purchase_requisitions(id),
+    department_id   INT NOT NULL REFERENCES departments(id),
+    warehouse_id    INT NOT NULL REFERENCES warehouses(id),
+    status          VARCHAR(12) NOT NULL DEFAULT 'issued' CHECK (status IN ('issued','confirmed','disputed')),
+    issued_by       INT NOT NULL REFERENCES users(id),
+    issued_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    confirmed_by    INT REFERENCES users(id),
+    confirmed_at    TIMESTAMPTZ,
+    confirm_notes   TEXT,
+    notes           TEXT
+);
+CREATE INDEX idx_issue_requisition ON material_issues(requisition_id);
+
+CREATE TABLE material_issue_items (
+    id                  SERIAL PRIMARY KEY,
+    issue_id            INT NOT NULL REFERENCES material_issues(id) ON DELETE CASCADE,
+    requisition_line_id INT NOT NULL REFERENCES purchase_requisition_lines(id),
+    product_id          INT NOT NULL REFERENCES products(id),
+    quantity            NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+    unit_cost           NUMERIC(12,2) NOT NULL CHECK (unit_cost >= 0)
+);
+CREATE INDEX idx_issue_items_line ON material_issue_items(requisition_line_id);
+
+ALTER TABLE procurement_approvals DROP CONSTRAINT procurement_approvals_entity_type_check;
+ALTER TABLE procurement_approvals ADD CONSTRAINT procurement_approvals_entity_type_check
+  CHECK (entity_type IN ('requisition','purchase_order','supplier_invoice','supplier_payment','material_issue'));
+ALTER TABLE procurement_approvals DROP CONSTRAINT procurement_approvals_step_check;
+ALTER TABLE procurement_approvals ADD CONSTRAINT procurement_approvals_step_check
+  CHECK (step IN ('submission','dept_review','ops_approval','assignment','supplier_selection','po_submission','po_authorization','invoice_approval','payment_approval','issue_confirmation'));
+ALTER TABLE procurement_approvals DROP CONSTRAINT procurement_approvals_decision_check;
+ALTER TABLE procurement_approvals ADD CONSTRAINT procurement_approvals_decision_check
+  CHECK (decision IN ('submitted','approved','rejected','revision_requested','assigned','authorized','cancelled','confirmed','disputed'));
+
+-- 030: Procurement Phase 5 — supplier invoice register, 3-way match and vouchers.
+CREATE TABLE supplier_invoices (
+    id                  SERIAL PRIMARY KEY,
+    internal_number     VARCHAR(24) NOT NULL UNIQUE,
+    supplier_id         INT NOT NULL REFERENCES suppliers(id),
+    purchase_order_id   INT NOT NULL REFERENCES purchase_orders(id),
+    supplier_invoice_no VARCHAR(80) NOT NULL,
+    invoice_date        DATE NOT NULL,
+    due_date            DATE,
+    subtotal            NUMERIC(14,2) NOT NULL CHECK (subtotal >= 0),
+    total_amount        NUMERIC(14,2) NOT NULL CHECK (total_amount >= 0),
+    status              VARCHAR(16) NOT NULL DEFAULT 'registered'
+                          CHECK (status IN ('registered','matched','mismatch','approved','partially_paid','paid','voided')),
+    match_result        JSONB,
+    notes               TEXT,
+    void_reason         TEXT,
+    registered_by       INT NOT NULL REFERENCES users(id),
+    registered_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    matched_by          INT REFERENCES users(id),
+    matched_at          TIMESTAMPTZ,
+    approved_by         INT REFERENCES users(id),
+    approved_at         TIMESTAMPTZ,
+    UNIQUE (supplier_id, supplier_invoice_no)
+);
+CREATE INDEX idx_supplier_invoices_po ON supplier_invoices(purchase_order_id, status);
+CREATE INDEX idx_supplier_invoices_supplier ON supplier_invoices(supplier_id, invoice_date DESC);
+
+CREATE TABLE supplier_invoice_lines (
+    id                  SERIAL PRIMARY KEY,
+    supplier_invoice_id INT NOT NULL REFERENCES supplier_invoices(id) ON DELETE CASCADE,
+    purchase_item_id    INT NOT NULL REFERENCES purchase_items(id),
+    quantity            NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+    unit_price          NUMERIC(12,2) NOT NULL CHECK (unit_price >= 0),
+    line_total          NUMERIC(14,2) NOT NULL CHECK (line_total >= 0),
+    UNIQUE (supplier_invoice_id, purchase_item_id)
+);
+
+ALTER TABLE supplier_payments
+    ADD COLUMN supplier_invoice_id INT REFERENCES supplier_invoices(id),
+    ADD COLUMN voucher_number VARCHAR(24),
+    ADD COLUMN status VARCHAR(12) NOT NULL DEFAULT 'legacy'
+        CHECK (status IN ('legacy','pending','approved','rejected','voided')),
+    ADD COLUMN approved_by INT REFERENCES users(id),
+    ADD COLUMN approved_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX uq_supplier_payment_voucher
+    ON supplier_payments(voucher_number) WHERE voucher_number IS NOT NULL;

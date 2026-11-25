@@ -89,7 +89,9 @@ async function postJournalEntry(client, { entryDate, description, source, refere
 // Used by every module's "Reverse" action (invoice, payment, purchase, expense,
 // and manual journal entries all share this one mechanism).
 async function reverseJournalEntry(client, { entryId, createdBy, description }) {
-  const { rows: entryRows } = await client.query('SELECT * FROM journal_entries WHERE id = $1', [entryId]);
+  // Serialize reversals of the same posted entry. The database also has a partial
+  // unique index on reverses_entry_id as a last line of defense for alternate writers.
+  const { rows: entryRows } = await client.query('SELECT * FROM journal_entries WHERE id = $1 FOR UPDATE', [entryId]);
   const original = entryRows[0];
   if (!original) throw new Error(`Journal entry ${entryId} not found`);
   if (original.status !== 'posted') throw new Error('Only a posted journal entry can be reversed');

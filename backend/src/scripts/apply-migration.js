@@ -10,6 +10,10 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const { pool } = require('../config/db');
+const { assertInitializedSchema, stripStandaloneTransactionCommands } = require('../services/schemaMigrationPlan');
+
+const MIGRATION_LOCK_A = 841027;
+const MIGRATION_LOCK_B = 34;
 
 function parseArgs(argv) {
   let yes = false, expectHost = null; const positional = [];
@@ -38,19 +42,33 @@ const ask = (q) => new Promise((resolve) => { const rl = readline.createInterfac
     if ((await ask(`Type the database name (${target.db}) to confirm: `)) !== target.db) throw new Error('Confirmation did not match - nothing changed');
   }
   const client = await pool.connect();
+  let locked = false;
   try {
+    await client.query('SELECT pg_advisory_lock($1,$2)', [MIGRATION_LOCK_A, MIGRATION_LOCK_B]);
+    locked = true;
+    const { rows: relations } = await client.query(
+      "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p','S','v','m','f') AND c.relname <> 'schema_migrations'"
+    );
+    assertInitializedSchema(relations);
     await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())');
+    const columns = await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='schema_migrations'");
+    if (!columns.rows.some((row) => row.column_name === 'name'))
+      throw new Error('schema_migrations has an unsupported format; refusing to alter or reinterpret its history');
     const done = await client.query('SELECT 1 FROM schema_migrations WHERE name = $1', [file]);
     if (done.rowCount) { console.log('Already applied - nothing to do.'); return; }
     await client.query('BEGIN');
-    await client.query(fs.readFileSync(full, 'utf8'));
+    const sql = stripStandaloneTransactionCommands(fs.readFileSync(full, 'utf8'));
+    await client.query(sql);
     await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
     await client.query('COMMIT');
     console.log('Applied successfully.');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
-  } finally { client.release(); }
+  } finally {
+    if (locked) await client.query('SELECT pg_advisory_unlock($1,$2)', [MIGRATION_LOCK_A, MIGRATION_LOCK_B]).catch(() => {});
+    client.release();
+  }
 })()
   .catch((err) => { console.error(String(err.message).replace(/postgres(ql)?:\/\/\S+/gi, '<url>')); process.exitCode = 1; })
   .finally(() => pool.end());

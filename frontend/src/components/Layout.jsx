@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Package, Factory, Truck, ShoppingCart, Wrench,
   Landmark, BarChart3, Settings as SettingsIcon, Menu, LogOut, Droplets,
-  PanelLeftClose, PanelLeftOpen, Sun, Moon, Building2, ClipboardList
+  PanelLeftClose, PanelLeftOpen, Sun, Moon, Building2, ClipboardList, ShieldAlert
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -14,11 +14,13 @@ import UserMenu from './UserMenu';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: null },
+  { to: '/operations', label: 'Operations Overview', icon: ClipboardList, roles: ['Admin', 'Operation Manager'] },
+  { to: '/logistics', label: 'Logistics Incidents', icon: ShieldAlert, roles: ['Admin', 'Operation Manager', 'Route Supervisor', 'Supervisor', 'Sales Manager', 'Data Entry Operator', 'Driver'] },
   { to: '/inventory', label: 'Inventory', icon: Package, roles: ['Admin', 'Inventory Manager', 'Storekeeper'] },
   { to: '/production', label: 'Production', icon: Factory, roles: ['Admin', 'Production Manager', 'Technician'] },
-  { to: '/sales', label: 'Sales & Distribution', icon: Truck, roles: ['Admin', 'Sales Manager'] },
+  { to: '/sales', label: 'Sales & Distribution', icon: Truck, roles: ['Admin', 'Sales Manager', 'Cashier'] },
   { to: '/requisitions', label: 'Requisitions', icon: ClipboardList, roles: null },
-  { to: '/procurement', label: 'Procurement', icon: ShoppingCart, roles: ['Admin', 'Procurement Officer', 'Storekeeper', 'Operation Manager', 'Finance Officer'] },
+  { to: '/procurement', label: 'Procurement', icon: ShoppingCart, roles: ['Admin', 'Procurement Officer', 'Storekeeper', 'Inventory Manager', 'Operation Manager', 'Finance Officer'] },
   { to: '/maintenance', label: 'Maintenance', icon: Wrench, roles: ['Admin', 'Production Manager', 'Technician'] },
   { to: '/finance', label: 'Finance', icon: Landmark, roles: ['Admin', 'Finance Officer'] },
   { to: '/reports', label: 'Reports', icon: BarChart3, roles: REPORT_ROLES },
@@ -34,7 +36,7 @@ function DriverLayout() {
   return (
     <div className="app-shell app-shell--driver">
       <header className="topbar">
-        <div className="topbar__left"><strong>Alnaciim ERP — Driver</strong></div>
+        <div className="topbar__left"><strong>Alnaciim ERP — Driver</strong><NavLink to="/logistics" className="btn secondary small">Report Incident</NavLink></div>
         <div className="topbar__user">
           <span>{user?.fullName}</span>
           <button onClick={() => { logout(); navigate('/login'); }}><LogOut size={14} /> Log out</button>

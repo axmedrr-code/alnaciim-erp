@@ -14,13 +14,14 @@ const { PERM } = require('../middleware/permissions');
 const { nextHno } = require('../services/hnoService');
 const { logAudit } = require('../services/auditService');
 const { postJournalEntry, getAccountByCode } = require('../services/accountingService');
+const { assertCashierPaymentDepartment } = require('../services/billingAccessPolicy');
 
 const router = Router();
 
 // Finance owns payments end to end (receive/edit/reports); Collector can only
 // record one; Admin can do anything. Driver/Data Entry never create or edit a
 // payment — they may only ever read (no route below requires a role for GET).
-const RECEIVE_PAYMENT_ROLES = ['Admin', 'Finance Officer', 'Collector'];
+const RECEIVE_PAYMENT_ROLES = ['Admin', 'Finance Officer', 'Collector', 'Cashier'];
 const EDIT_PAYMENT_ROLES = ['Admin', 'Finance Officer'];
 
 async function resolveCashOrBankAccount(client, method, bankAccountId) {
@@ -80,7 +81,7 @@ function resolveDeptParam(req, params) {
   const key = req.query.department;
   if (!key || key === 'all') return null;
   const dept = findDepartment(key);
-  if (!dept) return null;
+  if (!dept) throw new ApiError(400, 'Invalid department filter');
   params.push(dept.categories);
   return params.length;
 }
@@ -107,6 +108,40 @@ router.get('/drivers', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (re
   res.json({ data: rows, error: null });
 }));
 
+// Drivers may only see read-only Bulk Water balance status for customers on
+// their own active route. Do not grant them access to the general receivables,
+// payment-history, or finance dashboards.
+router.get('/driver/payment-status', requireRole('Driver'), asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT c.id AS customer_id, c.hno, c.name AS customer_name,
+       COALESCE((
+         SELECT SUM(so.total_amount - COALESCE((SELECT SUM(p.amount) FROM payments p
+             WHERE p.sales_order_id = so.id AND p.voided_at IS NULL), 0))
+         FROM sales_orders so
+         WHERE so.customer_id = c.id AND so.status NOT IN ('cancelled','reversed')
+           AND EXISTS (
+             SELECT 1 FROM sales_order_items soi JOIN products pr ON pr.id = soi.product_id
+             JOIN categories cat ON cat.id = pr.category_id
+             WHERE soi.sales_order_id = so.id AND cat.name = 'Bulk Water'
+           )
+       ), 0) AS outstanding_balance,
+       (SELECT MAX(p.payment_date) FROM payments p JOIN sales_orders so ON so.id = p.sales_order_id
+        WHERE so.customer_id = c.id AND p.voided_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM sales_order_items soi JOIN products pr ON pr.id = soi.product_id
+            JOIN categories cat ON cat.id = pr.category_id
+            WHERE soi.sales_order_id = so.id AND cat.name = 'Bulk Water'
+          )) AS last_payment_date
+     FROM route_runs rr
+     JOIN route_stops rs ON rs.route_run_id = rr.id
+     JOIN customers c ON c.id = rs.customer_id
+     WHERE rr.driver_id = $1 AND rr.status IN ('dispatched','in_progress')
+     ORDER BY customer_name, c.hno`,
+    [req.user.id]
+  );
+  res.json({ data: rows, error: null });
+}));
+
 // ---------------------------------------------------------------------
 // 1. Collection Dashboard
 // ---------------------------------------------------------------------
@@ -121,7 +156,7 @@ router.get('/dashboard', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (
   const p8 = []; const idx8 = resolveDeptParam(req, p8);
 
   const paymentAmount = (idx) => (idx ? `p.amount * ${deptFractionSql('so', idx)}` : 'p.amount');
-  const paymentsJoin = (idx) => (idx ? 'payments p JOIN sales_orders so ON so.id = p.sales_order_id' : 'payments p');
+  const paymentsJoin = () => 'payments p JOIN sales_orders so ON so.id = p.sales_order_id';
 
   const [outstanding, cashToday, cashMonth, creditMonth, custWithBalance, overdue, dailyTrend, monthlyTrend, topCollectors] = await Promise.all([
     pool.query(
@@ -129,17 +164,17 @@ router.get('/dashboard', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (
       p1
     ),
     pool.query(
-      `SELECT COALESCE(SUM(${paymentAmount(idx2)}), 0) AS total FROM ${paymentsJoin(idx2)} WHERE p.voided_at IS NULL AND p.payment_date = CURRENT_DATE`,
+      `SELECT COALESCE(SUM(${paymentAmount(idx2)}), 0) AS total FROM ${paymentsJoin()} WHERE p.voided_at IS NULL AND so.sale_type = 'cash' AND p.payment_date = CURRENT_DATE`,
       p2
     ),
     pool.query(
-      `SELECT COALESCE(SUM(${paymentAmount(idx3)}), 0) AS total FROM ${paymentsJoin(idx3)} WHERE p.voided_at IS NULL AND date_trunc('month', p.payment_date) = date_trunc('month', CURRENT_DATE)`,
+      `SELECT COALESCE(SUM(${paymentAmount(idx3)}), 0) AS total FROM ${paymentsJoin()} WHERE p.voided_at IS NULL AND so.sale_type = 'cash' AND date_trunc('month', p.payment_date) = date_trunc('month', CURRENT_DATE)`,
       p3
     ),
     pool.query(
-      `SELECT COALESCE(SUM(${deptScoped('so.total_amount', 'so', idx4)}), 0) AS total FROM sales_orders so
-       WHERE so.sale_type = 'credit' AND so.status NOT IN ('cancelled','reversed')
-         AND date_trunc('month', so.order_date) = date_trunc('month', CURRENT_DATE)`,
+      `SELECT COALESCE(SUM(${paymentAmount(idx4)}), 0) AS total FROM ${paymentsJoin()}
+       WHERE p.voided_at IS NULL AND so.sale_type = 'credit'
+         AND date_trunc('month', p.payment_date) = date_trunc('month', CURRENT_DATE)`,
       p4
     ),
     pool.query(
@@ -154,27 +189,26 @@ router.get('/dashboard', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (
       p6
     ),
     pool.query(
-      `SELECT p.payment_date AS day, SUM(${paymentAmount(idx7)}) AS total FROM ${paymentsJoin(idx7)}
+      `SELECT p.payment_date AS day, SUM(${paymentAmount(idx7)}) AS total FROM ${paymentsJoin()}
        WHERE p.voided_at IS NULL AND p.payment_date >= CURRENT_DATE - 13 GROUP BY p.payment_date ORDER BY p.payment_date`,
       p7
     ),
     pool.query(
-      `SELECT date_trunc('month', p.payment_date)::date AS month, SUM(${paymentAmount(idx7)}) AS total FROM ${paymentsJoin(idx7)}
+      `SELECT date_trunc('month', p.payment_date)::date AS month, SUM(${paymentAmount(idx7)}) AS total FROM ${paymentsJoin()}
        WHERE p.voided_at IS NULL AND p.payment_date >= CURRENT_DATE - INTERVAL '11 months' GROUP BY 1 ORDER BY 1`,
       p7
     ),
     pool.query(
       `SELECT u.full_name AS collector_name, SUM(${paymentAmount(idx8)}) AS total, COUNT(*) AS payment_count
-       FROM ${paymentsJoin(idx8)} JOIN users u ON u.id = p.recorded_by
+       FROM ${paymentsJoin()} JOIN users u ON u.id = p.recorded_by
        WHERE p.voided_at IS NULL AND date_trunc('month', p.payment_date) = date_trunc('month', CURRENT_DATE)
        GROUP BY u.full_name ORDER BY total DESC LIMIT 5`,
       p8
     )
   ]);
 
-  // Collection rate: this month's collections vs. this month's credit sales +
-  // opening receivables — a standard "how much of what's collectible did we
-  // actually collect" ratio. Average Collection Days: mean gap between an
+  // Collection rate: this month's collections against credit sales booked
+  // this month. Average Collection Days: amount-weighted gap between an
   // invoice's order_date and the payment(s) that actually cleared it,
   // weighted by amount paid.
   const p9 = []; const idx9 = resolveDeptParam(req, p9);
@@ -182,12 +216,12 @@ router.get('/dashboard', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (
   const [collectionRate, avgDays] = await Promise.all([
     pool.query(
       `SELECT
-         COALESCE((SELECT SUM(${paymentAmount(idx9)}) FROM ${paymentsJoin(idx9)} WHERE p.voided_at IS NULL AND date_trunc('month', p.payment_date) = date_trunc('month', CURRENT_DATE)), 0) AS collected,
+         COALESCE((SELECT SUM(${paymentAmount(idx9)}) FROM ${paymentsJoin()} WHERE p.voided_at IS NULL AND so.sale_type = 'credit' AND date_trunc('month', p.payment_date) = date_trunc('month', CURRENT_DATE)), 0) AS collected,
          COALESCE((SELECT SUM(${deptScoped('so.total_amount', 'so', idx9)}) FROM sales_orders so WHERE so.status NOT IN ('cancelled','reversed') AND date_trunc('month', so.order_date) = date_trunc('month', CURRENT_DATE)), 0) AS billed`,
       p9
     ),
     pool.query(
-      `SELECT COALESCE(AVG(p.payment_date - so.order_date), 0) AS avg_days
+      `SELECT COALESCE(SUM((p.payment_date - so.order_date) * ${paymentAmount(idx10)}) / NULLIF(SUM(${paymentAmount(idx10)}), 0), 0) AS avg_days
        FROM payments p JOIN sales_orders so ON so.id = p.sales_order_id
        WHERE p.voided_at IS NULL ${idx10 ? `AND ${deptFractionSql('so', idx10)} > 0` : ''}`,
       p10
@@ -358,23 +392,35 @@ router.get('/receivables', requireRole(...PERM.BILLING_VIEW), asyncHandler(async
 // second, customer-level ledger, so a customer's balance is always still
 // exactly total_amount - SUM(payments) per order, summed.
 // ---------------------------------------------------------------------
-router.get('/customers/search', requireRole(...PERM.BILLING_VIEW), asyncHandler(async (req, res) => {
+router.get('/customers/search', requireRole(...PERM.BILLING_VIEW, 'Cashier'), asyncHandler(async (req, res) => {
   const { q } = req.query;
   if (!q) throw new ApiError(400, 'q is required');
+  const isCashier = req.user.role === 'Cashier';
   const params = [q, `%${q}%`];
-  const deptIdx = resolveDeptParam(req, params);
+  const retailCategories = DEPARTMENTS.filter((d) => d.key !== 'bulk_water').flatMap((d) => d.categories);
+  const deptIdx = isCashier ? (params.push(retailCategories), params.length) : resolveDeptParam(req, params);
+  const retailInvoiceOnly = isCashier
+    ? `AND EXISTS (SELECT 1 FROM sales_order_items soi JOIN products pr ON pr.id = soi.product_id
+                   JOIN categories cat ON cat.id = pr.category_id
+                   WHERE soi.sales_order_id = so.id AND cat.name = ANY($${deptIdx}))`
+    : '';
+  const lastPaymentRetailOnly = isCashier
+    ? `AND EXISTS (SELECT 1 FROM sales_order_items soi JOIN products pr ON pr.id = soi.product_id
+                   JOIN categories cat ON cat.id = pr.category_id
+                   WHERE soi.sales_order_id = so.id AND cat.name = ANY($${deptIdx}))`
+    : '';
   const { rows } = await pool.query(
     `SELECT c.id, c.hno, c.name, c.phone, c.status,
             COALESCE((SELECT SUM(${balanceSql(deptIdx)}) FROM sales_orders so WHERE so.customer_id = c.id AND so.status NOT IN ('cancelled','reversed')), 0) AS outstanding_balance,
-            (SELECT MAX(so.order_date) FROM sales_orders so JOIN sales_order_items soi ON soi.sales_order_id = so.id
+            ${isCashier ? 'NULL::date' : `(SELECT MAX(so.order_date) FROM sales_orders so JOIN sales_order_items soi ON soi.sales_order_id = so.id
              JOIN products p ON p.id = soi.product_id JOIN categories cat ON cat.id = p.category_id
-             WHERE so.customer_id = c.id AND cat.name = 'Bulk Water' AND so.status = 'delivered') AS last_delivery_date,
+             WHERE so.customer_id = c.id AND cat.name = 'Bulk Water' AND so.status = 'delivered')`} AS last_delivery_date,
             (SELECT MAX(p.payment_date) FROM payments p JOIN sales_orders so ON so.id = p.sales_order_id
-             WHERE so.customer_id = c.id AND p.voided_at IS NULL) AS last_payment_date
+             WHERE so.customer_id = c.id AND p.voided_at IS NULL ${lastPaymentRetailOnly}) AS last_payment_date
      FROM customers c
      WHERE regexp_replace(c.hno, '[,\\s]', '', 'g') = regexp_replace($1, '[,\\s]', '', 'g')
         OR c.phone ILIKE $2 OR c.name ILIKE $2
-        OR EXISTS (SELECT 1 FROM sales_orders so WHERE so.customer_id = c.id AND so.invoice_hno ILIKE $2)
+        OR EXISTS (SELECT 1 FROM sales_orders so WHERE so.customer_id = c.id AND so.invoice_hno ILIKE $2 ${retailInvoiceOnly})
      ORDER BY c.name LIMIT 20`,
     params
   );
@@ -385,7 +431,8 @@ router.get('/customers/search', requireRole(...PERM.BILLING_VIEW), asyncHandler(
   // actually has a balance) or whether there's only one real answer.
   const withBreakdown = await Promise.all(rows.map(async (customer) => {
     const breakdown = [];
-    for (const dept of DEPARTMENTS) {
+    const visibleDepartments = isCashier ? DEPARTMENTS.filter((d) => d.key !== 'bulk_water') : DEPARTMENTS;
+    for (const dept of visibleDepartments) {
       const { rows: balRows } = await pool.query(
         `SELECT COALESCE(SUM(${balanceSql(1)}), 0) AS balance FROM sales_orders so
          WHERE so.customer_id = $2 AND so.status NOT IN ('cancelled','reversed')`,
@@ -409,6 +456,7 @@ router.post('/payments', requireRole(...RECEIVE_PAYMENT_ROLES), asyncHandler(asy
 
   const dept = department && department !== 'all' ? findDepartment(department) : null;
   if (department && department !== 'all' && !dept) throw new ApiError(400, 'Unknown department');
+  assertCashierPaymentDepartment(req.user, dept?.key);
 
   const result = await withTransaction(async (client) => {
     // When a department is specified, FIFO only ever considers orders that
