@@ -26,10 +26,10 @@ async function postStockMovement(client, {
 
   const { rows } = await client.query(
     `INSERT INTO stock_movements
-       (product_id, warehouse_id, movement_type, quantity, reference_type, reference_id, related_warehouse_id, performed_by, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       (product_id, warehouse_id, movement_type, quantity, reference_type, reference_id, related_warehouse_id, performed_by, notes, signed_quantity)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      RETURNING *`,
-    [productId, warehouseId, movementType, quantity, referenceType, referenceId, relatedWarehouseId, performedBy, notes]
+    [productId, warehouseId, movementType, quantity, referenceType, referenceId, relatedWarehouseId, performedBy, notes, delta]
   );
 
   const upsert = await client.query(

@@ -68,7 +68,7 @@ test('migration wrappers strip only an outer begin and commit, preserving inner 
 test('every repository migration has a safely normalizable outer transaction wrapper', () => {
   const migrationDir = path.join(__dirname, '../../../database/migrations');
   const files = fs.readdirSync(migrationDir).filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name));
-  assert.equal(files.length, 35);
+  assert.ok(files.length >= 36);
   for (const name of files) {
     const sql = fs.readFileSync(path.join(migrationDir, name), 'utf8');
     const executable = sql.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('--'));

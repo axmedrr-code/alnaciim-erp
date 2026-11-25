@@ -22,7 +22,7 @@ async function lookupUser(id) {
   const hit = cache.get(id);
   if (TTL_MS > 0 && hit && now - hit.at < TTL_MS) return hit.row;
   const { rows } = await pool.query(
-    'SELECT u.id, u.is_active, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1',
+    'SELECT u.id, u.is_active, u.assigned_warehouse_id, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1',
     [id]
   );
   const row = rows[0] || null;
@@ -49,7 +49,7 @@ async function authenticate(req, res, next) {
   try {
     const user = await lookupUser(Number(payload.id));
     if (!user || !user.is_active) return next(new ApiError(401, 'Account is disabled or no longer exists'));
-    req.user = { ...payload, role: user.role_name };
+    req.user = { ...payload, role: user.role_name, assignedWarehouseId: user.assigned_warehouse_id ? Number(user.assigned_warehouse_id) : null };
     next();
   } catch (err) {
     next(err); // database problems surface through the error handler (503 when the DB is down)

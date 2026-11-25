@@ -840,12 +840,27 @@ router.post('/truck-loads/:id/complete', requireRole(...RECONCILE_APPROVER_ROLES
 // this water. This is undoing the loading team's own mistake, so it belongs to
 // the same roles that can open a Route Session, not the ones who close it.
 router.post('/truck-loads/:id/cancel', requireRole(...LOADING_ROLES), asyncHandler(async (req, res) => {
-  const { rows } = await pool.query(
-    `UPDATE truck_loads SET status = 'cancelled', completed_at = now() WHERE id = $1 AND status = 'loaded' RETURNING *`,
-    [req.params.id]
-  );
-  if (!rows[0]) throw new ApiError(404, 'No active loading found with that id');
-  res.json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const load = (await client.query(`SELECT * FROM truck_loads WHERE id = $1 AND status = 'loaded' FOR UPDATE`, [req.params.id])).rows[0];
+    if (!load) throw new ApiError(404, 'No active loading found with that id');
+    if (Number(load.delivered_liters) > 0) {
+      throw new ApiError(409, 'Water from this loading has already been delivered. Reconcile and close the session instead of cancelling it.');
+    }
+    // If this session drew water from the warehouse, cancelling it puts that water back (a session opened on water that was
+    // already on the truck never touched warehouse stock, so there is nothing to return).
+    const drew = (await client.query(
+      `SELECT 1 FROM stock_movements WHERE reference_type = 'tanker_load' AND reference_id = $1 AND movement_type = 'OUT' LIMIT 1`, [load.id])).rows[0];
+    if (drew) {
+      await postStockMovement(client, { productId: load.product_id, warehouseId: load.warehouse_id, movementType: 'IN',
+        quantity: Number(load.quantity_loaded), referenceType: 'tanker_load', referenceId: load.id, performedBy: req.user.id,
+        notes: `Loading cancelled for truck #${load.truck_id}` });
+    }
+    const cancelled = (await client.query(`UPDATE truck_loads SET status = 'cancelled', completed_at = now() WHERE id = $1 RETURNING *`, [load.id])).rows[0];
+    await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'truck_load', entityId: load.id,
+      oldValue: { status: 'loaded', quantity_loaded: Number(load.quantity_loaded) }, newValue: { status: 'cancelled', water_returned_to_warehouse: Boolean(drew) } });
+    return cancelled;
+  });
+  res.json({ data: result, error: null });
 }));
 
 // "Payment receiving" — the legacy debtor-collection workflow: apply a payment against

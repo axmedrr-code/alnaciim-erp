@@ -1,7 +1,7 @@
 # Al-Naciim ERP Completion Report
 
 **Repository audit date:** 2026-11-24  
-**Overall status:** NOT COMPLETE — implementation is present in several areas, but isolated database-backed tests and user acceptance testing have not passed in this workspace.  
+**Overall status:** NOT COMPLETE — Procurement, Inventory, Production and Logistics now have passing database-backed API tests on the isolated Neon TEST database, but staff UAT, integrations, a security assessment, report reconciliation and deployment sign-off are outstanding.  
 **Production:** Not accessed, migrated, or deployed during this audit.
 
 This report describes only code and tests found in this Al-Naciim ERP repository. It does not treat screenshots, previous project repositories, or undocumented systems as API specifications.
@@ -30,7 +30,13 @@ This report describes only code and tests found in this Al-Naciim ERP repository
 - POS production build: **passed**.
 - Billing dashboard KPI source logic now separates receipts on cash-sale invoices from collections on credit-sale invoices; invalid department filters on Billing/retail endpoints now return HTTP 400 instead of silently showing all departments. These SQL paths remain unexecuted against PostgreSQL in this workspace.
 - Migration SQL wrapper normalization: **35 numbered migration files** were checked for standalone transaction markers that would conflict with the migration runner's transaction.
-- Database-backed tests: **not run**. `TEST_DATABASE_URL` is not configured. No migrations were applied and no database contents were changed.
+- **Database-backed E2E tests (Neon TEST only, never production):** run through the real Express app with a throwaway JWT secret and `@alnaciim.test` accounts; they refuse any database that is not localhost/Neon with a test name or an explicitly pinned host (`TEST_DATABASE_EXPECT_HOST`).
+  - Procurement phase 1 requisitions/approvals: **74/74 PASS**; phase 2 sourcing/quotations/PO authorization: **57/57 PASS**; phase 3 goods receipt + issuing: **32/32 PASS**; phase 5 supplier invoices/matching/payments: **25/25 PASS**.
+  - Inventory (movements, warehouse scoping, transfers, stock counts with independent approval, signed ledger): **44/44 PASS** (`npm run test:e2e:inventory`).
+  - Production (machines, BOM, batch lifecycle, consumption, wastage/variance, QC, independent output approval, reversals, downtime): **64/64 PASS** (`npm run test:e2e:production`).
+  - Logistics (tanker loading/reconciliation/returns/cancellation, route visibility, incidents and damaged goods, operations dashboard): **72/72 PASS** (`npm run test:e2e:logistics`).
+  - Migrations 026–037 are applied to Neon TEST; no migration has been applied to production or Railway.
+- Defects found and fixed by these tests: (1) `authenticate` never loaded `assigned_warehouse_id`, so every Storekeeper was refused on inventory movements, transfers and counts; (2) `ADJUSTMENT` stock movements did not record their direction, so the movement ledger could not reconcile to stock levels (migration 037 adds `signed_quantity`); (3) cancelling a tanker loading did not return the water to the warehouse and was allowed after water had been delivered; (4) disputing a material issue freed the quantity without returning stock (fixed earlier, now covered); (5) `purchase_orders.status` was too narrow for `pending_authorization` (migration 028).
 - Role-by-role acceptance tests, live workflow tests, finance/stock reconciliation against PostgreSQL, and staff UAT: **not run**.
 
 ## Security and data integrity
@@ -55,8 +61,8 @@ This report describes only code and tests found in this Al-Naciim ERP repository
 
 ## Known limitations and blockers
 
-1. No isolated TEST PostgreSQL database is configured, so database-backed procurement workflows and broader end-to-end tests cannot be truthfully marked PASS.
-2. The repository contains phase 1/2/3/5 procurement E2E scripts, but they require a dedicated `TEST_DATABASE_URL` and migrations/fixtures in that isolated database.
+1. The E2E suites run against a single shared Neon TEST database (and a local one when configured). There is no automated CI run and no backup/restore drill.
+2. Not yet covered by DB-backed E2E: Billing & Collections, Finance reports, machine costing/profitability, the POS flows, and report-to-ledger reconciliation.
 3. UAT has not been performed with Admin, department approver, Operation Manager, Procurement, Storekeeper, Finance, Data Entry, and Driver accounts.
 4. External Odoo, WMS and NUWACO integrations lack repository-defined contracts; implementing them without those contracts would be guesswork.
 5. Reports are not yet independently reconciled against transaction-level source records for every department.

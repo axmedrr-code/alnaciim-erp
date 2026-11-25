@@ -1651,3 +1651,8 @@ ALTER TABLE supplier_payments
     ADD COLUMN approved_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX uq_supplier_payment_voucher
     ON supplier_payments(voucher_number) WHERE voucher_number IS NOT NULL;
+
+-- 037: signed stock movement quantity
+UPDATE stock_movements SET signed_quantity = quantity WHERE signed_quantity IS NULL AND movement_type IN ('IN','TRANSFER_IN');
+UPDATE stock_movements SET signed_quantity = -quantity WHERE signed_quantity IS NULL AND movement_type IN ('OUT','TRANSFER_OUT');
+-- Legacy ADJUSTMENT rows (if any) stay NULL: their direction was never recorded.
