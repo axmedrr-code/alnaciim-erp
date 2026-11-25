@@ -22,6 +22,19 @@ const { createSalesOrderFromItems, postCreditApprovalRevenue } = require('./sale
 
 const router = Router();
 
+// Who may see what. Planning/KPI data is for dispatch management; the field-facing read endpoints (truck stock, route session,
+// driver summary, fleet/driver status) also serve the drivers' and warehouse/data-entry screens. Cashiers, collectors,
+// technicians and finance have no business in dispatch operations.
+const PLAN_ROLES = ['Admin', 'Route Supervisor', 'Supervisor', 'Sales Manager', 'Operation Manager'];
+const FIELD_ROLES = [...PLAN_ROLES, 'Driver', 'Data Entry Operator', 'Storekeeper'];
+const PLAN_WRITE_ROLES = ['Admin', 'Route Supervisor', 'Sales Manager', 'Supervisor'];
+
+// Route ids come straight from the URL: a non-numeric id is a 404, never a database error.
+router.param('id', (req, res, next, value) => {
+  if (!/^\d+$/.test(String(value)) || Number(value) > 2147483647) return next(new ApiError(404, 'Route not found'));
+  return next();
+});
+
 // Planning-estimate constants only — never presented as metered readings.
 // Shared with the frontend's own copy of these same figures for the Summary panel.
 const AVG_ROUTE_SPEED_KMH = 30;
@@ -91,7 +104,7 @@ async function bulkWaterProductIds(client) {
 // Real warehouse stock on hand for Bulk Water, summed across every warehouse —
 // what the fast tank-fill POS shows as "Remaining Stock". Straight off
 // stock_levels, the same ledger every other movement in this ERP writes to.
-router.get('/bulk-water-stock', asyncHandler(async (req, res) => {
+router.get('/bulk-water-stock', requireRole(...FIELD_ROLES), asyncHandler(async (req, res) => {
   const productIds = await bulkWaterProductIds(pool);
   if (!productIds.length) return res.json({ data: { liters: 0 }, error: null });
   const { rows } = await pool.query(
@@ -109,7 +122,7 @@ router.get('/bulk-water-stock', asyncHandler(async (req, res) => {
 // quantity_loaded minus its own delivered_liters, both updated together by
 // every POS Save (see /tank-dispatch). If no row is active, there is
 // genuinely nothing loaded on this truck right now.
-router.get('/truck-stock', asyncHandler(async (req, res) => {
+router.get('/truck-stock', requireRole(...FIELD_ROLES), asyncHandler(async (req, res) => {
   const { truck_id } = req.query;
   if (!truck_id) throw new ApiError(400, 'truck_id is required');
 
@@ -136,7 +149,7 @@ router.get('/truck-stock', asyncHandler(async (req, res) => {
 // entirely and just resume from that same figure. 0 whenever the truck is
 // currently active (nothing to "resume", it's already open) or has no
 // history of a nonzero leftover.
-router.get('/truck-existing-stock', asyncHandler(async (req, res) => {
+router.get('/truck-existing-stock', requireRole(...FIELD_ROLES), asyncHandler(async (req, res) => {
   const { truck_id } = req.query;
   if (!truck_id) throw new ApiError(400, 'truck_id is required');
 
@@ -161,7 +174,7 @@ router.get('/truck-existing-stock', asyncHandler(async (req, res) => {
 // Warehouse/Admin does a Load Tanker, closed the moment Data Entry/Admin
 // reconciles or completes it) — never a separate flag to keep in sync, just
 // the same row this whole feature already tracks.
-router.get('/route-session', asyncHandler(async (req, res) => {
+router.get('/route-session', requireRole(...FIELD_ROLES), asyncHandler(async (req, res) => {
   const { truck_id } = req.query;
   if (!truck_id) throw new ApiError(400, 'truck_id is required');
 
@@ -200,7 +213,7 @@ router.get('/route-session', asyncHandler(async (req, res) => {
 // single truck's stops today (route_stops.cash_received is the actual cash
 // the driver already collected on each stop; the remainder of that stop's
 // order total is what's still outstanding on credit), never a dashboard.
-router.get('/driver-summary', asyncHandler(async (req, res) => {
+router.get('/driver-summary', requireRole(...FIELD_ROLES), asyncHandler(async (req, res) => {
   const { truck_id } = req.query;
   if (!truck_id) throw new ApiError(400, 'truck_id is required');
   const today = new Date().toISOString().slice(0, 10);
@@ -228,7 +241,7 @@ router.get('/driver-summary', asyncHandler(async (req, res) => {
 // Main dashboard — the 9 KPIs the Dispatch Center opens with. Every figure is a
 // live read over sales_orders/route_runs/route_stops/trucks/users — nothing
 // cached, nothing computed anywhere else.
-router.get('/dashboard', asyncHandler(async (req, res) => {
+router.get('/dashboard', requireRole(...PLAN_ROLES), asyncHandler(async (req, res) => {
   const date = req.query.date || new Date().toISOString().slice(0, 10);
   const productIds = await bulkWaterProductIds(pool);
 
@@ -304,7 +317,7 @@ router.get('/dashboard', asyncHandler(async (req, res) => {
 // not yet delivered/returned today, available headroom, current assigned
 // driver, and a computed Available / On Route / Maintenance status — all
 // derived from existing trucks/truck_loads/route_runs, no new truck data stored.
-router.get('/trucks-status', asyncHandler(async (req, res) => {
+router.get('/trucks-status', requireRole(...FIELD_ROLES), asyncHandler(async (req, res) => {
   const date = req.query.date || new Date().toISOString().slice(0, 10);
   const { rows } = await pool.query(
     `SELECT t.id, t.truck_code, t.plate_number, t.model, t.capacity, t.capacity_unit, t.status AS truck_status, t.fuel_percent,
@@ -330,7 +343,7 @@ router.get('/trucks-status', asyncHandler(async (req, res) => {
 
 // Suggests trucks with enough available capacity for a required-liters amount —
 // backs "if liters exceed capacity, suggest another truck."
-router.get('/suggest-trucks', asyncHandler(async (req, res) => {
+router.get('/suggest-trucks', requireRole(...PLAN_ROLES), asyncHandler(async (req, res) => {
   const requiredLiters = Number(req.query.required_liters || 0);
   const date = req.query.date || new Date().toISOString().slice(0, 10);
   const { rows } = await pool.query(
@@ -351,7 +364,7 @@ router.get('/suggest-trucks', asyncHandler(async (req, res) => {
 // Driver roster with real fields only — phone/license from users, current route
 // from today's route_runs. "Working hours today" has no data source (no
 // attendance/clock-in system exists) and is never fabricated — always null.
-router.get('/drivers-status', asyncHandler(async (req, res) => {
+router.get('/drivers-status', requireRole(...FIELD_ROLES), asyncHandler(async (req, res) => {
   const date = req.query.date || new Date().toISOString().slice(0, 10);
   // A driver already on ANY active route today (including a still-draft one) is
   // not free to take a second — matches assertNotDoubleBooked's own definition of
@@ -373,7 +386,7 @@ router.get('/drivers-status', asyncHandler(async (req, res) => {
 // "Available Orders" table is built from. Every column comes straight off
 // sales_orders/sales_order_items/customers/customer_tanks/warehouses, which
 // already exist — nothing here is a new orders table.
-router.get('/available-orders', asyncHandler(async (req, res) => {
+router.get('/available-orders', requireRole(...PLAN_ROLES), asyncHandler(async (req, res) => {
   const productIds = await bulkWaterProductIds(pool);
   if (!productIds.length) return res.json({ data: [], error: null });
 
@@ -507,7 +520,7 @@ router.post('/suggest-split', requireRole('Admin', 'Route Supervisor', 'Sales Ma
   res.json({ data: { groups, unassigned }, error: null });
 }));
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', requireRole(...PLAN_ROLES), asyncHandler(async (req, res) => {
   const { date, status } = req.query;
   const conditions = [];
   const params = [];
@@ -542,7 +555,7 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', requireRole(...PLAN_ROLES), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT r.*, t.plate_number, t.capacity AS truck_capacity, d.full_name AS driver_name, s.full_name AS salesman_name, q.name AS qaade_name
      FROM route_runs r
@@ -675,6 +688,12 @@ router.post('/tank-dispatch', requireRole('Admin', 'Route Supervisor', 'Sales Ma
 
   const result = await withTransaction(async (client) => {
     const { rows: truckLookup } = await client.query('SELECT assigned_driver_id FROM trucks WHERE id = $1', [truck_id]);
+    if (!truckLookup[0]) throw new ApiError(404, 'Truck not found');
+    // A driver only records sales on their own truck; the planning roles may cover for anyone.
+    if (req.user.role === 'Driver') {
+      if (Number(truckLookup[0].assigned_driver_id) !== Number(req.user.id)) throw new ApiError(403, 'You can only record sales on the truck assigned to you');
+      if (req.body.driver_id && Number(req.body.driver_id) !== Number(req.user.id)) throw new ApiError(403, 'A driver cannot record a sale on behalf of another driver');
+    }
     const driverId = req.body.driver_id || truckLookup[0]?.assigned_driver_id || null;
 
     await assertNotDoubleBooked(client, { truckId: truck_id, driverId, routeDate });
@@ -701,6 +720,9 @@ router.post('/tank-dispatch', requireRole('Admin', 'Route Supervisor', 'Sales Ma
       if (!(liters > 0)) throw new ApiError(400, 'Liters must be greater than zero for every tank');
       if (!(price >= 0)) throw new ApiError(400, 'Price per liter cannot be negative');
       if (discount < 0) throw new ApiError(400, 'Discount cannot be negative');
+      const cashRaw = Number(line.cash_received || 0);
+      if (!Number.isFinite(cashRaw) || cashRaw < 0) throw new ApiError(400, 'Cash received cannot be negative');
+      if (line.payment_type && !['cash', 'credit', 'cash_credit'].includes(line.payment_type)) throw new ApiError(400, 'payment_type must be cash, credit or cash_credit');
 
       // This ERP's customer registration is HNO-based, not tank-based — a line
       // normally just names a customer directly (customer_id). customer_tank_id
@@ -780,6 +802,9 @@ router.post('/tank-dispatch', requireRole('Admin', 'Route Supervisor', 'Sales Ma
       // cash was handed over right there, in the same 10-second transaction. Anything
       // not covered by cash simply stays on the customer's account as real AR.
       const cashReceived = Number(line.cash_received || 0);
+      if (cashReceived > Number(approvedOrder.total_amount) + 0.005) {
+        throw new ApiError(400, `Cash received (${cashReceived}) cannot exceed the sale value (${Number(approvedOrder.total_amount)})`);
+      }
       if (cashReceived > 0) {
         const transactionHno = await nextHno(client, 'transaction');
         await client.query(
@@ -1041,10 +1066,10 @@ router.post('/:id/close', requireRole('Admin', 'Route Supervisor', 'Supervisor')
 
 router.post('/:id/cancel', requireRole('Admin', 'Route Supervisor', 'Supervisor'), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
-    `UPDATE route_runs SET status = 'cancelled' WHERE id = $1 AND status NOT IN ('closed','cancelled') RETURNING *`,
+    `UPDATE route_runs SET status = 'cancelled' WHERE id = $1 AND status IN ('draft','ready') RETURNING *`,
     [req.params.id]
   );
-  if (!rows[0]) throw new ApiError(400, 'Route not found or cannot be cancelled');
+  if (!rows[0]) throw new ApiError(409, 'Only a planned (draft/ready) route can be cancelled. A dispatched or completed route has already moved orders, stock and revenue: close it instead.');
   res.json({ data: rows[0], error: null });
 }));
 
