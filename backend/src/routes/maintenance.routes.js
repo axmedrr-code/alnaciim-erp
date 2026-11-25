@@ -13,10 +13,12 @@ const router = Router();
 
 router.get('/schedules', requireRole(...PERM.MAINTENANCE_VIEW), asyncHandler(async (req, res) => {
   const { due_within, machine_id } = req.query;
+  if (due_within !== undefined && !/^\d+$/.test(String(due_within))) throw new ApiError(400, 'due_within must be a whole number of days');
+  if (machine_id !== undefined && !/^\d+$/.test(String(machine_id))) throw new ApiError(400, 'machine_id must be a number');
   const conditions = [];
   const params = [];
   if (machine_id) { params.push(machine_id); conditions.push(`ms.machine_id = $${params.length}`); }
-  if (due_within) { params.push(Number(due_within)); conditions.push(`ms.next_due_date <= CURRENT_DATE + $${params.length}`); }
+  if (due_within) { params.push(Number(due_within)); conditions.push(`ms.next_due_date <= CURRENT_DATE + $${params.length}::int`); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const { rows } = await pool.query(
     `SELECT ms.*, m.name AS machine_name, u.full_name AS assigned_to_name
@@ -32,6 +34,12 @@ router.get('/schedules', requireRole(...PERM.MAINTENANCE_VIEW), asyncHandler(asy
 router.post('/schedules', requireRole('Admin', 'Production Manager', 'Technician'), validate(schemas.maintenanceScheduleCreate), asyncHandler(async (req, res) => {
   const { machine_id, maintenance_type, frequency_days, last_done_date, next_due_date, assigned_to, description } = req.body;
   const result = await withTransaction(async (client) => {
+    if (!(await client.query('SELECT 1 FROM machines WHERE id = $1', [machine_id])).rows[0]) throw new ApiError(404, 'Machine not found');
+    if (assigned_to) {
+      const u = (await client.query('SELECT is_active FROM users WHERE id = $1', [assigned_to])).rows[0];
+      if (!u) throw new ApiError(404, 'Assigned user not found');
+      if (!u.is_active) throw new ApiError(400, 'An inactive user cannot be assigned a maintenance schedule');
+    }
     const { rows } = await client.query(
       `INSERT INTO maintenance_schedules (machine_id, maintenance_type, frequency_days, last_done_date, next_due_date, assigned_to, description)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
@@ -45,6 +53,7 @@ router.post('/schedules', requireRole('Admin', 'Production Manager', 'Technician
 
 router.get('/logs', requireRole(...PERM.MAINTENANCE_VIEW), asyncHandler(async (req, res) => {
   const { machine_id } = req.query;
+  if (machine_id !== undefined && !/^\d+$/.test(String(machine_id))) throw new ApiError(400, 'machine_id must be a number');
   const conditions = [];
   const params = [];
   if (machine_id) { params.push(machine_id); conditions.push(`ml.machine_id = $${params.length}`); }
@@ -65,6 +74,18 @@ router.post('/logs', requireRole('Admin', 'Production Manager', 'Technician'), v
   const { machine_id, schedule_id, downtime_id, type, description, cost, parts_used } = req.body; // parts_used: [{ product_id, quantity, warehouse_id }]
 
   const result = await withTransaction(async (client) => {
+    const machine = (await client.query('SELECT id, status FROM machines WHERE id = $1', [machine_id])).rows[0];
+    if (!machine) throw new ApiError(404, 'Machine not found');
+    if (schedule_id) {
+      const sch = (await client.query('SELECT machine_id FROM maintenance_schedules WHERE id = $1 FOR UPDATE', [schedule_id])).rows[0];
+      if (!sch) throw new ApiError(404, 'Maintenance schedule not found');
+      if (Number(sch.machine_id) !== Number(machine_id)) throw new ApiError(400, 'This schedule belongs to a different machine');
+    }
+    if (downtime_id) {
+      const dt = (await client.query('SELECT machine_id FROM downtime_logs WHERE id = $1', [downtime_id])).rows[0];
+      if (!dt) throw new ApiError(404, 'Downtime record not found');
+      if (Number(dt.machine_id) !== Number(machine_id)) throw new ApiError(400, 'This downtime record belongs to a different machine');
+    }
     const costCenterId = await resolveCostCenterId(client, req.body.cost_center_id, 'CC-MAINT');
     const { rows } = await client.query(
       `INSERT INTO maintenance_logs (machine_id, schedule_id, downtime_id, type, performed_by, description, cost, status, cost_center_id)
