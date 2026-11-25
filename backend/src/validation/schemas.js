@@ -286,7 +286,7 @@ const projectCreate = z.object({
     end_date: z.string().optional().nullable(),
     budget_amount: money.optional(),
     notes: z.string().optional().nullable()
-  })
+  }).refine((b) => !b.start_date || !b.end_date || b.end_date >= b.start_date, { message: 'The end date cannot be before the start date' })
 });
 
 const projectUpdate = z.object({
@@ -580,7 +580,7 @@ const customerUpdate = z.object({
     name: z.string().min(1).optional(),
     type: z.enum(['retail', 'wholesale', 'distributor', 'tanker']).optional(),
     phone: z.string().optional().nullable(),
-    email: z.string().optional().nullable(),
+    email: z.string().email().optional().nullable().or(z.literal('')),
     address: z.string().optional().nullable(),
     city: z.string().optional().nullable(),
     credit_limit: money.optional(),
@@ -877,6 +877,7 @@ const userCreate = z.object({
     password: z.string().min(8, 'Password must be at least 8 characters'),
     role_id: id,
     department: z.string().optional().nullable(),
+    department_id: idOptional,
     phone: z.string().optional().nullable(),
     assigned_warehouse_id: idOptional
   })
@@ -888,11 +889,38 @@ const userUpdate = z.object({
     email: z.string().email().optional(),
     role_id: id.optional(),
     department: z.string().optional().nullable(),
+    department_id: idOptional,
     phone: z.string().optional().nullable(),
     assigned_warehouse_id: idOptional,
     is_active: z.boolean().optional(),
     commission_rate: z.coerce.number().min(0).max(100).optional().nullable()
   }).refine((b) => Object.keys(b).length > 0, { message: 'No fields to update' })
+});
+
+const passwordRule = z.string().min(8, 'Password must be at least 8 characters').max(128);
+const userPasswordReset = z.object({ body: z.object({ password: passwordRule }) });
+const passwordChange = z.object({ body: z.object({ current_password: z.string().min(1), new_password: passwordRule }) });
+const supplierUpdate = z.object({
+  body: z.object({
+    name: z.string().min(1).optional(),
+    category: z.enum(['raw_material', 'packaging', 'spare_part', 'chemicals']).optional().nullable(),
+    contact_person: z.string().optional().nullable(),
+    phone: z.string().optional().nullable(),
+    email: z.string().email().optional().nullable().or(z.literal('')),
+    address: z.string().optional().nullable(),
+    payment_terms_days: z.coerce.number().int().min(0).max(365).optional(),
+    is_active: z.boolean().optional()
+  }).refine((b) => Object.keys(b).length > 0, { message: 'No fields to update' })
+});
+const truckUpdate = z.object({
+  body: z.object({
+    plate_number: z.string().min(1).optional(),
+    model: z.string().optional().nullable(),
+    assigned_driver_id: idOptional,
+    status: z.enum(['active', 'maintenance', 'inactive']).optional(),
+    notes: z.string().optional().nullable(),
+    reason: z.string().optional().nullable()
+  })
 });
 
 // ---- backups ----
@@ -975,7 +1003,7 @@ module.exports = {
   coaAccountCreate, coaAccountUpdate, journalEntryCreate, journalEntryUpdate, cashEntryCreate, bankAccountCreate,
   supplierPaymentCreate, supplierInvoiceCreate, supplierInvoicePaymentCreate, supplierPaymentDecision, budgetCreate, fiscalYearCreate,
   reverseRequest,
-  userCreate, userUpdate,
+  userCreate, userUpdate, userPasswordReset, passwordChange, supplierUpdate, truckUpdate,
   restoreBackupConfirm,
   requisitionCreate, requisitionUpdate, requisitionDecision, requisitionAssign, requisitionCancel,
   quotationRequest, quotationRecord, supplierSelection, lineProducts, poFromRequisition, issueCreate, issueConfirm

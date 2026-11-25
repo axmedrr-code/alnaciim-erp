@@ -10,6 +10,7 @@ const { PERM } = require('../middleware/permissions');
 const { customerReadPolicy } = require('../services/customerReadPolicy');
 
 const router = Router();
+router.param('id', (req, res, next, v) => (/^\d+$/.test(String(v)) && Number(v) <= 2147483647 ? next() : next(new ApiError(404, 'Record not found'))));
 const CUSTOMER_READ_ROLES = [...new Set([...PERM.SALES_FIN, 'Driver', 'Data Entry Operator'])];
 // Full historical customer ledgers are for Sales/Finance management. Collectors
 // use the payment-specific Billing search, and Drivers use only route HNO lookup.

@@ -65,7 +65,8 @@ async function start(prefix, accounts) {
     console.log(`\nSUMMARY: ${pass}/${total} PASS`);
     process.exit(pass === total ? 0 : 1);
   };
-  return { api, q, pool, U, rep, finish, gl, stock, ledgerMatches };
+  const raw = async (method, p, body, headers = {}) => { const r = await fetch(`http://localhost:${PORT}/api/v1${p}`, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined }); let j = {}; try { j = await r.json(); } catch (_) {} return { s: r.status, b: j, d: j.data, e: j.error }; };
+  return { api, raw, secret: SECRET, jwt, q, pool, U, rep, finish, gl, stock, ledgerMatches };
 }
 
 module.exports = { start };

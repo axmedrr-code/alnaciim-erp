@@ -14,10 +14,23 @@ const schemas = require('../validation/schemas');
 const { logAudit } = require('../services/auditService');
 
 const router = Router();
+router.param('id', (req, res, next, v) => (/^\d+$/.test(String(v)) && Number(v) <= 2147483647 ? next() : next(new ApiError(404, 'Record not found'))));
 
 // Managers may reassign a driver, change status, or edit notes — never the
 // truck's identity (Plate Number/Model). Only Admin ever touches identity.
 const MANAGER_ROLES = ['Sales Manager', 'Route Supervisor', 'Supervisor'];
+
+// A truck's permanent driver must be an active Driver who is not already assigned to another truck: the driver's identity is what
+// authorizes sales on that truck in the field POS.
+async function assertAssignableDriver(client, driverId, truckId) {
+  if (!driverId) return;
+  const d = (await client.query(`SELECT u.id, u.is_active, r.name AS role FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, [driverId])).rows[0];
+  if (!d) throw new ApiError(404, 'Driver not found');
+  if (d.role !== 'Driver') throw new ApiError(400, 'Only a user with the Driver role can be assigned to a truck');
+  if (!d.is_active) throw new ApiError(400, 'An inactive driver cannot be assigned to a truck');
+  const other = (await client.query(`SELECT plate_number FROM trucks WHERE assigned_driver_id = $1 AND archived_at IS NULL AND ($2::int IS NULL OR id <> $2)`, [driverId, truckId || null])).rows[0];
+  if (other) throw new ApiError(409, `This driver is already assigned to truck ${other.plate_number}`);
+}
 
 router.get('/', asyncHandler(async (req, res) => {
   const { include_archived } = req.query;
@@ -34,6 +47,7 @@ router.post('/', requireRole('Admin'), validate(schemas.truckCreate), asyncHandl
   const result = await withTransaction(async (client) => {
     const { rows: dupe } = await client.query('SELECT id FROM trucks WHERE plate_number = $1', [plate_number]);
     if (dupe[0]) throw new ApiError(409, `Plate Number ${plate_number} is already registered to another truck`);
+    await assertAssignableDriver(client, assigned_driver_id, null);
 
     // truck_code is a separate, permanent internal identifier (TRK-###) —
     // distinct from Plate Number, which can change — derived from the
@@ -61,7 +75,7 @@ router.post('/', requireRole('Admin'), validate(schemas.truckCreate), asyncHandl
 // client from sending it) and it will simply be ignored rather than
 // half-trusted, since silently downgrading permissions client-side is not
 // something this endpoint relies on.
-router.put('/:id', requireRole('Admin', ...MANAGER_ROLES), asyncHandler(async (req, res) => {
+router.put('/:id', requireRole('Admin', ...MANAGER_ROLES), validate(schemas.truckUpdate), asyncHandler(async (req, res) => {
   const isAdmin = req.user.role === 'Admin';
   const { plate_number, model, assigned_driver_id, status, notes, reason } = req.body;
 
@@ -84,7 +98,7 @@ router.put('/:id', requireRole('Admin', ...MANAGER_ROLES), asyncHandler(async (r
       params.push(plate_number); fields.push(`plate_number = $${params.length}`);
     }
     if (isAdmin && model !== undefined) { params.push(model || null); fields.push(`model = $${params.length}`); }
-    if (assigned_driver_id !== undefined) { params.push(assigned_driver_id || null); fields.push(`assigned_driver_id = $${params.length}`); }
+    if (assigned_driver_id !== undefined) { await assertAssignableDriver(client, assigned_driver_id, before.id); params.push(assigned_driver_id || null); fields.push(`assigned_driver_id = $${params.length}`); }
     if (status !== undefined) { params.push(status); fields.push(`status = $${params.length}`); }
     if (notes !== undefined) { params.push(notes || null); fields.push(`notes = $${params.length}`); }
 
@@ -125,6 +139,8 @@ router.post('/:id/archive', requireRole('Admin'), asyncHandler(async (req, res) 
     const before = existingRows[0];
     if (!before) throw new ApiError(404, 'Truck not found');
     if (before.archived_at) throw new ApiError(400, 'This truck is already archived');
+    const busy = (await client.query(`SELECT (SELECT COUNT(*) FROM truck_loads WHERE truck_id = $1 AND status = 'loaded')::int AS loads, (SELECT COUNT(*) FROM route_runs WHERE truck_id = $1 AND status IN ('draft','ready','dispatched','in_progress'))::int AS routes`, [before.id])).rows[0];
+    if (busy.loads > 0 || busy.routes > 0) throw new ApiError(409, 'This truck still has an active loading or an open route: close those before archiving it');
 
     const { rows } = await client.query(`UPDATE trucks SET archived_at = now() WHERE id = $1 RETURNING *`, [before.id]);
     await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'truck', entityId: before.id, oldValue: before, newValue: rows[0] });

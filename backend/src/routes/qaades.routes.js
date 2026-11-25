@@ -8,6 +8,23 @@ const schemas = require('../validation/schemas');
 const { logAudit } = require('../services/auditService');
 
 const router = Router();
+router.param('id', (req, res, next, v) => (/^\d+$/.test(String(v)) && Number(v) <= 2147483647 ? next() : next(new ApiError(404, 'Record not found'))));
+
+// A qaade's collector must be an active Collector and its truck must exist and be active: they are what route and collection
+// reports are built on.
+async function assertQaadeLinks(client, { collector_id, truck_id }) {
+  if (collector_id) {
+    const u = (await client.query(`SELECT u.is_active, r.name AS role FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, [collector_id])).rows[0];
+    if (!u) throw new ApiError(404, 'Collector not found');
+    if (u.role !== 'Collector') throw new ApiError(400, 'The collector of a qaade must be a user with the Collector role');
+    if (!u.is_active) throw new ApiError(400, 'An inactive user cannot be the collector of a qaade');
+  }
+  if (truck_id) {
+    const t = (await client.query('SELECT archived_at, status FROM trucks WHERE id = $1', [truck_id])).rows[0];
+    if (!t) throw new ApiError(404, 'Truck not found');
+    if (t.archived_at) throw new ApiError(400, 'An archived truck cannot be linked to a qaade');
+  }
+}
 
 router.get('/', requireRole(...PERM.FIELD_PERF), asyncHandler(async (req, res) => {
   const { status } = req.query;
@@ -47,6 +64,7 @@ router.post('/', requireRole('Admin', 'Sales Manager'), validate(schemas.qaadeCr
   const { qaade_code, name, area, collector_id, truck_id, notes } = req.body;
 
   const result = await withTransaction(async (client) => {
+    await assertQaadeLinks(client, { collector_id, truck_id });
     const { rows } = await client.query(
       `INSERT INTO qaades (qaade_code, name, area, collector_id, truck_id, notes) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
       [qaade_code, name, area || null, collector_id || null, truck_id || null, notes || null]
@@ -70,6 +88,7 @@ router.put('/:id', requireRole('Admin', 'Sales Manager'), validate(schemas.qaade
   const result = await withTransaction(async (client) => {
     const { rows: before } = await client.query('SELECT * FROM qaades WHERE id = $1', [req.params.id]);
     if (!before[0]) throw new ApiError(404, 'Qaade not found');
+    await assertQaadeLinks(client, { collector_id: req.body.collector_id, truck_id: req.body.truck_id });
     const { rows } = await client.query(`UPDATE qaades SET ${updates.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
     await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'qaade', entityId: rows[0].id, oldValue: before[0], newValue: rows[0] });
     return rows[0];

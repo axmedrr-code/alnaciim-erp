@@ -8,6 +8,7 @@ const schemas = require('../validation/schemas');
 const { logAudit } = require('../services/auditService');
 
 const router = Router();
+router.param('id', (req, res, next, v) => (/^\d+$/.test(String(v)) && Number(v) <= 2147483647 ? next() : next(new ApiError(404, 'Record not found'))));
 
 router.get('/', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { status, customer_id } = req.query;

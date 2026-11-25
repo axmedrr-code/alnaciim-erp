@@ -16,6 +16,9 @@ router.get('/', asyncHandler(async (req, res) => {
 router.post('/', requireRole('Admin', 'Inventory Manager'), validate(schemas.categoryCreate), asyncHandler(async (req, res) => {
   const { name, parent_id, product_type } = req.body;
   const result = await withTransaction(async (client) => {
+    // Category names identify business departments elsewhere (e.g. Bulk Water, Bottled Water, Ice Products), so they must be unique.
+    const dupe = (await client.query('SELECT id FROM categories WHERE lower(btrim(name)) = lower(btrim($1))', [name])).rows[0];
+    if (dupe) throw new ApiError(409, `A category named "${name}" already exists`);
     const { rows } = await client.query(
       'INSERT INTO categories (name, parent_id, product_type) VALUES ($1,$2,$3) RETURNING *',
       [name, parent_id || null, product_type]

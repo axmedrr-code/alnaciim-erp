@@ -139,6 +139,13 @@ async function createSalesOrderFromItems(client, {
   const { rows: customerRows } = await client.query('SELECT * FROM customers WHERE id = $1', [customerId]);
   const customer = customerRows[0];
   if (!customer) throw new ApiError(404, 'Customer not found');
+  if (customer.status === 'closed') throw new ApiError(409, 'This customer account is closed: no new invoices can be raised');
+  if (customer.status === 'suspended' && saleType === 'credit') throw new ApiError(409, 'This customer account is suspended: credit sales are not allowed');
+  if (projectId) {
+    const project = (await client.query('SELECT status FROM projects WHERE id = $1', [projectId])).rows[0];
+    if (!project) throw new ApiError(404, 'Project not found');
+    if (project.status !== 'active') throw new ApiError(409, `This project is ${project.status}: no new invoices can be raised against it`);
+  }
 
   const subtotal = items.reduce((sum, it) => sum + it.quantity * it.unit_price - (it.discount || 0), 0);
   const totalAmount = subtotal - (discount || 0) + (tax || 0) + (deliveryFee || 0);
