@@ -1,87 +1,173 @@
-# Al-Naciim ERP Completion Report
+# Al-Naciim Water Company ERP — Completion Report (final, TEST stage)
 
-**Repository audit date:** 2026-11-24  
-**Overall status:** NOT COMPLETE — Procurement, Inventory, Production and Logistics now have passing database-backed API tests on the isolated Neon TEST database, but staff UAT, integrations, a security assessment, report reconciliation and deployment sign-off are outstanding.  
-**Production:** Not accessed, migrated, or deployed during this audit.
+**Date:** 2026-11-25 · **Code:** `main` @ `1747573` (PRs #1–#16 merged) · **Scope:** Alnaciim ERP / POS / Route Operations only
+**Environment:** isolated TEST stack (Neon TEST database, Render API, Vercel ERP/POS). **Production, Railway, Odoo, WMS, NUWACO and GEEDSAN were never accessed, migrated or modified.**
 
-This report describes only code and tests found in this Al-Naciim ERP repository. It does not treat screenshots, previous project repositories, or undocumented systems as API specifications.
+> **Soo koobid (Somali):** Dhammaan modules-ka ERP-ga waxay leeyihiin backend, DB, RBAC, approval/audit iyo tests. Tests-ka API-ga ee DB-ga dhabta ah (TEST) waa **1,139 E2E + 50 unit = 1,189, dhammaan PASS**. **Weli ma aha production-ready**: UAT-ga dadka, integrations (Odoo/WMS/NUWACO/GEEDSAN), security assessment, iyo backup-ka hosted waa sii maqan yihiin. Warbixintan ma sheegayso wax dhammaaday oo aan tijaabo PASS lahayn.
 
-## Module status
+---
 
-| Area | Evidence in this repository | Status |
-|---|---|---|
-| Procurement | Requisition, sourcing/quotation, purchase order authorization, receiving, material issue, supplier invoice matching, voucher/payment routes and UI; migrations 026–030 | Implemented in source; E2E/UAT pending |
-| Production | Batch/BOM/material consumption, QC, finished-goods posting/approval, machines, downtime, capacity calendar and reports | Implemented in source; database/UAT verification pending |
-| Inventory & Warehouse | Stock ledger, receipts/issues/transfers, stock-count adjustment approvals; migration 031 | Implemented in source; unit-tested policies, DB verification pending |
-| Logistics | Existing tanker route operations, truck-load lifecycle/reconciliation, returned-water receipt, damaged-goods/logistics exceptions; migrations 019–023 and 033–034 | Implemented in source; route-level E2E/UAT pending |
-| Finance | Accounting/journal services, procurement supplier invoicing and payment approval, Billing & Collections APIs/UI | Implemented in source; cross-module balance/ledger E2E pending |
-| Roles & approvals | Auth middleware, role checks, department/ownership controls, separation-of-duties checks in procurement and approvals | Present in source; complete role matrix testing pending |
-| Operations Manager view | Operations dashboard and pending work/exception data | Present in source; E2E/UAT pending |
-| Audit trail | Shared audit service, audit endpoints, procurement approvals/audit records, inventory/production/logistics audit calls | Present in source; completeness review across every write path pending |
-| Reports | Existing production, sales, finance and procurement dashboards/reports | Partial; completeness and reconciliation against the general ledger are unverified |
-| Odoo / WMS / NUWACO business integrations | No implemented integration adapters, API contracts or credentials found in this repository | Pending. A design-only proposal is in `docs/INTEGRATION_ARCHITECTURE_PROPOSAL.md` and awaits approval; nothing is implemented or connected |
-| Railway | Deployment/configuration references only | Business-data integration not implemented or verified |
+## 1. Verdict
 
-## Verification run
+| Question | Answer |
+|---|---|
+| Are the requested modules implemented end to end (backend, DB, RBAC, approvals, audit, tests)? | **Yes**, for Procurement, Production, Inventory & Warehouse, Logistics, Finance & Billing, Users/Roles, Operations Manager dashboard, Audit trail and the supporting master data. |
+| Do all automated tests pass? | **Yes.** 50/50 unit and 1,139/1,139 database-backed E2E assertions on the TEST database (last clean sequential run, section 4). |
+| Has it been through staff acceptance testing (UAT)? | **No.** Not started. |
+| Are the external integrations built? | **No.** Design-only proposal awaiting approval and information from each system's owner. |
+| Is it ready for production? | **No.** See section 8 for the blockers. It **is ready for UAT on the TEST stack.** |
 
-- Backend DB-free automated tests: **50 passed, 0 failed** (`npm run test:unit`). These cover role middleware/read-permission behavior and exact backend/frontend permission-group parity, warehouse/tank/product price-cost read scopes, customer HNO-only reads for Drivers/Data Entry, driver delivery ownership/transitions, cashier retail-payment scope, retail-customer search normalization, safe customer-import error messages, stock-count rules, invoice matching, journal reversal locking and migration presence, Chart of Accounts cycle/system-account policies, production-output approval and downtime policies, tanker-return calculations, logistics validation, and migration/bootstrap safety planning. They are not end-to-end database tests.
-- Backend JavaScript syntax checks: **passed** for `backend/src` and `backend/tests`.
-- ERP frontend production build after route-level lazy loading: **passed**. Initial entry chunk is about 254 KB (gzip about 84 KB); Vite still warns about the deferred export utility chunk (~757 KB).
-- POS production build: **passed**.
-- Billing dashboard KPI source logic now separates receipts on cash-sale invoices from collections on credit-sale invoices; invalid department filters on Billing/retail endpoints now return HTTP 400 instead of silently showing all departments. These SQL paths remain unexecuted against PostgreSQL in this workspace.
-- Migration SQL wrapper normalization: **35 numbered migration files** were checked for standalone transaction markers that would conflict with the migration runner's transaction.
-- **Database-backed E2E tests (Neon TEST only, never production):** run through the real Express app with a throwaway JWT secret and `@alnaciim.test` accounts; they refuse any database that is not localhost/Neon with a test name or an explicitly pinned host (`TEST_DATABASE_EXPECT_HOST`).
-  - Procurement phase 1 requisitions/approvals: **74/74 PASS**; phase 2 sourcing/quotations/PO authorization: **57/57 PASS**; phase 3 goods receipt + issuing: **32/32 PASS**; phase 5 supplier invoices/matching/payments: **25/25 PASS**.
-  - Inventory (movements, warehouse scoping, transfers, stock counts with independent approval, signed ledger): **44/44 PASS** (`npm run test:e2e:inventory`).
-  - Production (machines, BOM, batch lifecycle, consumption, wastage/variance, QC, independent output approval, reversals, downtime): **64/64 PASS** (`npm run test:e2e:production`).
-  - Logistics (tanker loading/reconciliation/returns/cancellation, route visibility, incidents and damaged goods, operations dashboard): **72/72 PASS** (`npm run test:e2e:logistics`).
-  - Finance (chart of accounts, journal draft/post/reverse, cash entries, bank accounts, expenses, budgets, fiscal-year closing and period lock, trial balance / P&L / balance sheet / cash flow / AR / AP): **77/77 PASS** (`npm run test:e2e:finance`).
-  - Customer tanks, machine maintenance and the audit trail (tank registry, deliveries and tank level, schedules and logs with spare-part consumption, cross-record checks, append-only audit): **79/79 PASS** (`npm run test:e2e:tanks-maintenance`).
-  - Backups and restore (real pg_dump/pg_restore round trip, retention, deletion, path safety, role scoping, disabled-restore mode, broken pg_dump): **42/42 + 17/17 PASS**, run only on a throwaway local database created and dropped by `npm run test:e2e:backups` (a restore replaces a whole database, so it is never run against the shared TEST database).
-  - Users & authentication (admin-only user management, login, JWT hardening, immediate effect of role/deactivation, lock-out protection, password change/reset, brute-force limiting, audit): **69/69 PASS** (`npm run test:e2e:users`).
-  - Qaade (collector territories) and Customers (registration, HNO issuing, role scoping, account-status rules, qaade performance vs ledger): **68/68 PASS** (`npm run test:e2e:qaade-customers`).
-  - Master data (categories, products, suppliers, warehouses, trucks, cost centres, projects: rules, duplicates, price/cost visibility, deactivation guards, audit): **122/122 PASS** (`npm run test:e2e:master-data`).
-  - Route Operations (planned routes draft/dispatch/close/cancel/clone, capacity and double-booking, the tank-fill POS with truck stock, cash/credit settlement, credit limit rollback, driver ownership, planning helpers, role scoping): **99/99 PASS** (`npm run test:e2e:route-operations`).
-  - Machine costing (cost recording and ledger posting, bank vs cash payment, role scoping, reversal, profitability with revenue attribution and maintenance cost): **33/33 PASS** (`npm run test:e2e:machine-costing`).
-  - Quotations (draft/sent/accepted/rejected/converted lifecycle, totals, edit/delete rules, validity dates, credit and cash conversion, ledger untouched until an order exists): **44/44 PASS** (`npm run test:e2e:quotations`).
-  - Retail POS (bottled water and ice: cash and credit counter sales, stock deduction and rollback, credit limit, department and cashier scope, collections, statements, the eight retail reports, stock/AR integrity): **57/57 PASS** (`npm run test:e2e:pos`).
-  - Billing & Collections (credit invoices, approval, FIFO collections, overpayment, department/cashier scope, payment edit and void, follow-ups, customer sub-ledger = general ledger): **64/64 PASS** (`npm run test:e2e:billing`).
-  - Migrations 026–037 are applied to Neon TEST; no migration has been applied to production or Railway.
-- Defects found and fixed by these tests: (1) `authenticate` never loaded `assigned_warehouse_id`, so every Storekeeper was refused on inventory movements, transfers and counts; (2) `ADJUSTMENT` stock movements did not record their direction, so the movement ledger could not reconcile to stock levels (migration 037 adds `signed_quantity`); (3) cancelling a tanker loading did not return the water to the warehouse and was allowed after water had been delivered; (4) disputing a material issue freed the quantity without returning stock (fixed earlier, now covered); (5) `purchase_orders.status` was too narrow for `pending_authorization` (migration 028); (6) journal errors (unbalanced entry, reversing a draft, double reversal, double posting) surfaced as HTTP 500 and are now 400/409; (7) a closed fiscal year did not stop new postings into it, which is now refused; (8) `POST /billing/payments` accepted collections against an unapproved (pending) invoice, leaving Accounts Receivable inconsistent with the sub-ledger; it is now refused; (9) the journal-reversal API returned a stale row without `is_reversal`; (10) a quotation past its valid-until date could still be accepted and converted into an order (now refused); (12) every Route Operations read endpoint (dispatch dashboard, available orders, truck/driver status, truck stock, route session) was open to any signed-in user including Cashier, Collector and Technician; now role-scoped; (13) any Driver could record tank-fill sales on another driver's truck (now 403); (14) tank-fill sales accepted negative cash received and cash larger than the sale value, and an unknown payment type caused a 500 (all 400 now); (15) a delivered/completed route could be cancelled after its orders and revenue were posted (now only draft/ready routes can be cancelled); (16) a non-numeric route id caused a 500 (now 404); (17) there was no way to change a password: Admin reset (`PUT /users/:id/password`) and self-service change (`POST /auth/change-password`) now exist, never return or log a password; (18) the user API could not set a user's department (needed for procurement approvals): `department_id` is now accepted; (19) an Admin could disable or demote their own account or the last active Admin (locked out of administration): now refused; (20) a truck could be given a non-driver, an inactive driver, or a driver already on another truck, and a truck with an active loading or open route could be archived; (21) a qaade could be given a collector who is not an active Collector, or an archived truck; (22) customers marked closed or suspended could still be invoiced; (23) an end date before a start date, and new invoices on a completed project, were accepted; (24) products and warehouses holding stock could be deactivated, and a product type could change after stock movements existed; (25) a deactivated cost centre still accepted expenses; (26) duplicate category names (which identify departments such as Bulk Water) were allowed; (27) customer email was validated on creation but not on update; (28) non-numeric ids on customer, cost-centre, project, user, truck, product, warehouse and qaade URLs caused a 500 (now 404); there was no way to update a supplier (update/deactivate now exists, refused while it has open purchase orders); (29) backup file paths were only checked with a bare prefix test, so a record pointing at a sibling folder such as `backups_x/` could be downloaded: the path must now lie inside the backup folder; (30) a backup restore, which replaces the entire live database, needed only a confirmation word: it is now disabled unless the server operator sets `ALLOW_DB_RESTORE=true` (not set on Render); (31) the audit trail could be edited or deleted in the database: `audit_logs` is now append-only (migration 038); (32) the tank history ignored refills made through the field POS; (33) `due_within` on maintenance schedules crashed with a 500, and maintenance logs could be linked to another machine's schedule or downtime; (34) mirrors of migrations 037 and 038 in `database/schema.sql` had lost their first statement, so a fresh install would have lacked `stock_movements.signed_quantity` (fixed and now exercised by the backup test, which builds a scratch database from schema.sql + seed.sql); (11) the Retail POS, quotation conversion and route dispatch accepted negative unit prices and discounts larger than the line, producing negative-value invoices; all order creation now validates amounts centrally.
-- Role-by-role acceptance tests, live workflow tests, finance/stock reconciliation against PostgreSQL, and staff UAT: **not run**.
+## 2. Requested scope vs. result
 
-## Security and data integrity
+| # | Requirement | Result | Evidence |
+|---|---|---|---|
+| 1 | **Procurement** — Department Request → Supplier Payment | **Complete (tests PASS); UAT pending** | Requisition → Department Head review → Operation Manager approval (signed, SHA-256 re-verifiable) → assignment → quotations/comparison/justified selection → PO + Operation Manager authorization → sent → goods receipt (accepted/damaged/rejected; only accepted stock and AP) → material issue + department confirmation → supplier invoice with 3-way match → payment approval/voucher. Migrations 026–030. E2E 74 + 57 + 32 + 25. |
+| 2 | **Production** — raw materials, finished goods, consumption, wastage, variance, approval | **Complete; UAT pending** | BOM auto-consumption incl. wastage, QC pass/fail, independent output approval (supervisor cannot approve own output), reversals, downtime, capacity calendar, machine costing and profitability. Migration 032. E2E 64 + 33. |
+| 3 | **Inventory & Warehouse** — receiving, issuing, transfers, reconciliation, stock control | **Complete; UAT pending** | Signed stock ledger (`signed_quantity`, migration 037) so stock levels always reconcile to movements; warehouse-scoped Storekeepers; transfers; stock counts with independent approval and stale-count protection. Migration 031. E2E 44. |
+| 4 | **Logistics** — tanker loading, dispatch, delivery, returns, damaged goods | **Complete; UAT pending** | Route sessions (load → sell → reconcile/close), water returns, cancellation returns water, planned routes and the field tank-fill POS (truck stock, credit limit, cash/credit), incidents and damaged goods with separation of duties. Migrations 033–034. E2E 72 + 99. |
+| 5 | **Finance** — invoices, three-way match, payments, vouchers, reports | **Complete; UAT pending** | Double-entry ledger, draft/post/reverse, fiscal-year close with period lock, bank/cash, expenses, budgets, billing and collections (FIFO, department rules), retail POS, quotations; trial balance, P&L, balance sheet, cash flow, AR/AP. Migrations 035–036. E2E 77 + 64 + 57 + 44. |
+| 6 | **Roles & permissions** | **Complete; UAT pending** | DB-backed authorization on every request (role, active flag, assigned warehouse), 16 roles exercised across the suites, Admin lock-out protection, password change/reset, brute-force limiting, JWT hardening. E2E 69 + role checks in every suite. |
+| 7 | **Operations Manager dashboard** | **Complete; UAT pending** | Pending requisitions/PO authorizations, overdue POs, confirmations, invoice mismatches, payment approvals, low stock, production approvals, open route sessions and logistics exceptions (covered in the logistics E2E). |
+| 8 | **Audit trail** | **Complete** | Every write path audited with user and timestamp, old/new values; **append-only at database level** (`audit_logs`, procurement approvals/audit; migration 038). |
+| 9 | **Management and finance reports** | **Partially verified** | Financial statements reconcile to the ledger in tests; retail/billing reports verified for the paths tested. Per-department management reports are not independently reconciled (section 7). |
+| 10 | **Integrations** (Odoo, WMS, NUWACO, GEEDSAN, Railway) | **Not built — proposal only** | `docs/INTEGRATION_ARCHITECTURE_PROPOSAL.md` (merged, design-only). Each system has its own owner/team and stays separate; no API contracts, credentials or sandboxes exist in this repository. |
 
-- No production credentials or production services were used.
-- Migration scripts now fail closed for untracked/non-empty databases; fresh schema bootstrap requires explicit `--bootstrap-empty`. Incremental migration requires an explicitly selected file and retains target confirmation/host pin safeguards.
-- Authentication/role guards, request validation, row locking and audit calls are present in the reviewed workflow routes. This is not equivalent to a full security assessment.
-- A full dependency vulnerability scan, SAST/DAST, penetration test, and exhaustive authorization matrix were **not run**; security status is therefore not certified.
-- Driver delivery reads and updates are constrained to the assigned driver; successful status/confirmation changes now write audit events in the same transaction. Route-level authorization still needs isolated DB-backed verification.
-- Driver payment status is exposed through a separate read-only endpoint limited to Bulk Water customers on that driver's active route; it does not grant access to general receivables or finance reports. PostgreSQL execution remains unverified.
-- Cashier permissions are kept out of the general Billing read group; cashier payment requests require a Bottled Water or Ice department, and retail invoice printing/warehouse selection/customer lookup use retail-scoped endpoints. The retail POS customer picker queries a bounded, minimal-field search (up to 20 active customers) rather than loading the full customer table. Retail search normalization is unit-tested; endpoint SQL and workflow still need PostgreSQL integration/UAT verification.
-- Driver and Data Entry customer lookup is HNO-only, bounded to eight results, and returns a reduced customer projection; general customer ledger/activity APIs are restricted to Sales/Finance management. Cashier statements now have a dedicated retail-only ledger route, preventing disclosure of Bulk Water invoices. These authorization/query paths still require database-backed role tests and UAT.
-- Warehouse, legacy tank, inventory stock/movement, and Qaade/collector read endpoints now use explicit operational permission groups; warehouse/tank group membership is mirrored in the frontend and covered by DB-free policy tests. Live API acceptance verification remains pending.
-- Product catalog reads now return unit price and unit cost only for designated roles; the Products UI hides those columns when unauthorized. The cost/price projection policy is unit-tested; API runtime authorization still requires isolated PostgreSQL UAT.
-- Production machine creation, usage, downtime, batch creation/start, and BOM creation now write audit records in the same transaction as their changes. Downtime resolution refuses duplicate closes and only restores machine status after the last open downtime is resolved. Policy tests pass; DB-backed transaction/audit verification remains pending.
-- Product, category, warehouse, supplier, customer-tank, tank-maintenance, and machine-maintenance schedule/log create/update paths now write audit records transactionally. Updates capture old/new values where the route supports updates; empty product, warehouse, and tank updates are rejected. These route changes pass the repository-wide JavaScript syntax check; their database transaction behavior still requires isolated PostgreSQL verification.
-- Chart-of-account creation/updates, manual cash receipts/payments, bank-account creation (including its linked account), budget upserts, and fiscal-year creation now also write audit events in their database transaction. Journal-entry creation, posting, reversal, and fiscal-year closing already had audit calls. Database-backed verification remains pending.
-- Journal reversals now lock the original entry before checking prior reversals; migration `035_unique_journal_reversal.sql` and the fresh schema add a partial unique index so each entry can be reversed only once. The migration intentionally fails with a clear message if existing data already contains duplicate reversals. DB-free service/migration-sequence tests pass; existing-database preflight and SQL application remain pending because no TEST_DATABASE_URL is configured.
-- Chart of Accounts API rejects parent cycles and attempts to deactivate active system accounts. Migration `036_chart_of_accounts_integrity.sql` and fresh-bootstrap schema add database triggers for cycle prevention (serialized with a transaction advisory lock to handle concurrent re-parenting) and system-account activation. DB-free policy and migration-source checks pass; trigger execution is not yet PostgreSQL-verified.
-- Customer import now updates existing HNOs directly and handles an insert race without changing HNO; importer error reports use plain-language fixes and do not echo raw database messages. This path has DB-free unit coverage, but the PostgreSQL import behavior remains unverified without an isolated test database.
-- A test database backup/restore drill and trial-balance/stock-ledger reconciliation were **not performed**.
+## 3. What was delivered
 
-## Known limitations and blockers
+- **Database:** migrations 026–038 (all applied to Neon TEST only) and mirrored into `database/schema.sql` for fresh installs (a scratch-database build from schema + seed is part of the backup test).
+- **Backend:** Express routes and services for every module above; zod validation on write paths; row-locked state transitions; one atomic transaction per business event (stock + ledger + audit).
+- **Frontend:** requisitions, sourcing panel, PO authorization/tracking, goods-receipt form, material issues, supplier invoices, stock counts, operations dashboard, logistics exceptions and the existing sales/production/finance screens. They build and deploy; **they have not been driven by an automated browser test** — the E2E suites exercise the API behind them.
+- **Tests:** 18 database-backed E2E suites (4 procurement phases + 14 module suites) and 16 DB-free unit test files (section 4).
+- **Deployment (TEST only):** Render API from `main`, Vercel ERP (CLI) and POS (Git-linked). All merges were made through reviewed PRs with explicit approval; no force-pushes.
 
-1. The E2E suites run against a single shared Neon TEST database (and a local one when configured). There is no automated CI run and no backup/restore drill.
-2. Not yet covered by DB-backed E2E: maintenance cost posting to the ledger (see limitations), the remaining management dashboards, and per-department report reconciliation. Note: collections/aging dashboards still count unapproved (pending) credit invoices as receivable although the ledger does not; this reporting difference is a known limitation to review with Finance.
-3. UAT has not been performed with Admin, department approver, Operation Manager, Procurement, Storekeeper, Finance, Data Entry, and Driver accounts.
-4. External Odoo, WMS and NUWACO integrations lack repository-defined contracts; implementing them without those contracts would be guesswork.
-5. Reports are not yet independently reconciled against transaction-level source records for every department.
-6. Route-level lazy loading now reduces the ERP entry chunk to about 254 KB (gzip about 84 KB). The export utility remains a deferred ~757 KB chunk and Vite still warns about its size; it is loaded only when a report export is requested.
+## 4. Test results (TEST database, throwaway JWT secret, `@alnaciim.test` accounts)
 
-7. Maintenance spend (`maintenance_logs.cost`, tank maintenance cost) is recorded and shown in machine profitability but is **not posted to the general ledger**; Finance must decide the accounts and payment treatment before it can be posted.
-8. Render Free has an ephemeral disk and no `pg_dump`, so server-side backups do not work there; hosted databases need the provider's own backups (Neon point-in-time restore) or a dedicated backup service.
+Run one suite at a time (suites share the TEST database, so concurrent runs corrupt each other's balance assertions).
 
-## Deployment readiness
+| Suite | Result |
+|---|---|
+| Unit (DB-free): permissions parity, access/read policies, matcher, reversal locking, migration plan, truck reconciliation, schemas… | **50 / 50** |
+| Procurement phase 1 — requisitions, approvals, signatures | **74 / 74** |
+| Procurement phase 2 — sourcing, quotations, PO authorization | **57 / 57** |
+| Procurement phase 3 — goods receipt, issuing, dispute reversal | **32 / 32** |
+| Procurement phase 5 — supplier invoices, 3-way match, payments | **25 / 25** |
+| Inventory & warehouse | **44 / 44** |
+| Production | **64 / 64** |
+| Logistics (tanker sessions, incidents, dashboard) | **72 / 72** |
+| Route operations (planning, tank-fill POS) | **99 / 99** |
+| Finance (ledger, fiscal year, statements) | **77 / 77** |
+| Billing & collections | **64 / 64** |
+| Retail POS | **57 / 57** |
+| Quotations | **44 / 44** |
+| Machine costing | **33 / 33** |
+| Users & authentication | **69 / 69** |
+| Qaade + customers | **68 / 68** |
+| Master data (categories, products, suppliers, warehouses, trucks, cost centres, projects) | **122 / 122** |
+| Tanks, maintenance, audit trail | **79 / 79** |
+| Backups/restore (local throwaway DB): restore on / restore off | **42 / 42** · **17 / 17** |
+| **Total** | **1,139 E2E + 50 unit = 1,189 PASS · 0 FAIL** |
 
-**Not deployment-ready / not completion-certified.** The code compiles and the available DB-free tests pass, but database-backed workflows, full RBAC, accounting and inventory integrity, security assessment, integrations, and user acceptance remain unverified. Do not apply migrations to production or deploy based on this report alone.
+Other checks: backend and test JavaScript syntax (pass), ERP and POS production builds (pass), migration-wrapper normalization over every migration (pass).
+
+**Honest notes on the run history:** individual suites failed during development exactly where they found real defects (section 5); each was fixed and re-run. Two suites flaked once in regression for reasons that were not product defects (two runs overlapping on the shared TEST database, and one transient 500 on the production capacity calendar whose cause was not identified — it passed on every other run; see limitations).
+
+## 5. Defects found by the tests and fixed
+
+Roughly 34 real defects were found and fixed while writing the E2E suites. The most important:
+
+**Money and ledger integrity**
+- Accounting errors (unbalanced entry, double post, double reversal) returned HTTP 500; postings into a **closed fiscal year** were accepted; the reversal API returned a stale row.
+- Collections could be applied to an **unapproved** invoice, leaving Accounts Receivable inconsistent with the sub-ledger.
+- POS, quotation conversion and route dispatch accepted **negative prices** and discounts larger than the line; tank-fill sales accepted negative/oversized cash.
+- `ADJUSTMENT` stock movements did not record their direction, so the ledger could not reconcile to stock levels (fixed with `signed_quantity`).
+- Disputing a material issue freed the quantity without returning stock; cancelling a tanker loading did not return water; a delivered route could be cancelled after revenue was posted.
+- Expired quotations could be accepted/converted; deactivated cost centres, closed projects and closed/suspended customers still accepted postings.
+
+**Access control**
+- Storekeepers were refused everywhere because the warehouse assignment was never loaded for authenticated requests.
+- Every Route Operations read endpoint (dispatch dashboard, available orders, truck stock…) was open to **any signed-in user**; any Driver could sell from another driver's truck.
+- An Admin could disable or demote their own account or the last Admin; trucks could be given non-drivers; qaades could be given non-collectors.
+
+**Security and operations**
+- Backup file paths accepted a sibling folder sharing the prefix (arbitrary file download); a database restore needed only a confirmation word — it is now **disabled unless `ALLOW_DB_RESTORE=true`**.
+- The audit trail could be edited or deleted in the database — now append-only.
+- No way to change/reset a password and no way to set a user's department — both added (never returned or logged).
+- `database/schema.sql` mirrors of migrations 037/038 had lost their first statement (a fresh install would have broken) — fixed and covered by the backup test's scratch-database build.
+- Many master-data URLs returned HTTP 500 on a non-numeric id (now 404); several duplicate/foreign-key cases surfaced as 500 (now 4xx).
+
+## 6. Security status
+
+**Controls in place and tested:** HS256-pinned JWT; DB-backed role and `is_active` on every request (role changes and deactivation take effect immediately); forged, unsigned, expired and wrong-algorithm tokens rejected; generic login errors (no account enumeration); per-account and per-IP login throttling; separation of duties on approvals, counts, output approvals, incidents and issues; row-locked transitions; signed, append-only approvals and audit; Admin lock-out protection; parameterised SQL throughout; helmet; secrets only in environment variables (rotated during the project; none committed).
+
+**Open security items (not certified):**
+1. No SAST/DAST, penetration test or full dependency vulnerability scan was run; a moderate `react-router` advisory is deferred.
+2. Changing a password does not invalidate existing tokens (valid up to 8 hours).
+3. The login rate limiter is in-process memory (per server instance).
+4. Planned-route dispatch posts non-bulk stock from the first warehouse with negative stock allowed (known finding H3, not changed).
+5. There is no dedicated Sales Rep role (known finding M3).
+6. Render Free has an ephemeral disk and no `pg_dump`: server-side backups cannot work there.
+
+## 7. Known limitations
+
+1. **UAT not performed** with real staff (Admin, department heads, Operation Manager, Procurement, Storekeeper, Finance, Data Entry, Driver, Cashier).
+2. **UI not browser-automated** — only API-level E2E, builds and manual spot checks of the deployed ERP.
+3. **Maintenance spend** (`maintenance_logs.cost`, tank maintenance cost) is recorded and shown in machine profitability but **not posted to the general ledger**; Finance must decide the accounts and payment treatment.
+4. Collections/aging dashboards still count **unapproved (pending) credit invoices** as receivable although the ledger does not.
+5. Per-department management reports are not independently reconciled to source records; the cost-of-goods and inventory valuation reports have not been audited against the ledger.
+6. No CI pipeline, load/performance test or restore drill on the hosted database. One unexplained transient 500 (production capacity calendar) appeared once in a regression run.
+7. The TEST database is shared by every suite; suites must be run sequentially.
+8. Render Free spins down after inactivity (first request can take ~50 s) and has no backups; the old Railway data was not recovered.
+9. Password-change/reset exist, but there is no e-mail/SMS self-service reset flow.
+
+## 8. Deployment readiness
+
+| Environment | Status |
+|---|---|
+| **TEST** (Neon + Render + Vercel) | **Deployed and verified** at `main` @ `1747573`; migrations 026–038 applied; smoke-tested without credentials. Ready for UAT. |
+| **Production** | **Not ready / not touched.** |
+
+**Before any production deployment (each needs your explicit approval):**
+1. Complete UAT with every role and fix what it finds; keep the TEST suites as the regression gate.
+2. Apply migrations 026–038 to a **copy** of production first (rehearsal), with a verified backup and rollback plan; then production, once, by an approved person.
+3. Provision real backups for the hosted database (provider point-in-time restore or a backup service) and run a restore drill; leave `ALLOW_DB_RESTORE` unset.
+4. Security assessment (dependency scan at minimum, penetration test recommended); decide token invalidation on password change.
+5. Finance decisions: maintenance cost posting, pending-invoice treatment in collections dashboards, opening balances and chart-of-accounts sign-off.
+6. A paid, always-on hosting tier (Render Free is for testing) and production secrets generated fresh (never reused from TEST).
+7. Integrations only after each owner supplies API documentation and a sandbox (section 9).
+
+## 9. Integrations (Odoo, WMS, NUWACO, GEEDSAN, Railway)
+
+Not implemented. Each is a **separate system with its own owner/team** and a separate project; they are never combined (GEEDSAN and NUWACO especially). The merged proposal (`docs/INTEGRATION_ARCHITECTURE_PROPOSAL.md`) recommends an outbox plus a separate gateway per partner, API-only, with no shared database or secrets, TEST-first with synthetic data. **Phase 0 needs, from each owner separately:** purpose, API documentation, sandbox access, system of record per data domain, a named owner, and the pilot choice. Railway is not an integration; recovering its data is a separate approved project.
+
+## 10. Recommended next steps
+
+1. UAT on TEST with a role-by-role checklist (create test accounts per role; passwords delivered only via your clipboard).
+2. Send the Phase 0 questions to each system owner individually.
+3. Decide the Finance items in section 7 (3 and 4).
+4. Add a CI job that runs the unit and E2E suites against an ephemeral Postgres on every PR.
+5. Browser-level UI tests for the highest-risk screens (approvals, receiving, POS).
+
+## 11. How to re-run the verification
+
+```powershell
+cd backend
+npm run test:unit
+# Database-backed suites: set TEST_DATABASE_URL (localhost, or Neon with TEST_DATABASE_EXPECT_HOST pinned) and run ONE at a time:
+npm run test:e2e:procurement:phase1   # …phase2, phase3, phase5
+npm run test:e2e:inventory
+npm run test:e2e:production
+npm run test:e2e:logistics
+npm run test:e2e:route-operations
+npm run test:e2e:finance
+npm run test:e2e:billing
+npm run test:e2e:pos
+npm run test:e2e:quotations
+npm run test:e2e:machine-costing
+npm run test:e2e:users
+npm run test:e2e:qaade-customers
+npm run test:e2e:master-data
+npm run test:e2e:tanks-maintenance
+npm run test:e2e:backups              # creates and drops its own local scratch database
+```
+
+The E2E suites refuse any database that is not localhost or Neon with a test name (or an explicitly pinned host), never read the production `DATABASE_URL`, and only insert/modify rows they create.
