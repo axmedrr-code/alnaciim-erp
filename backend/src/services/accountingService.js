@@ -3,6 +3,8 @@
 // event being recorded (a sale, a payment, a goods receipt, ...) so the ledger and the
 // operational data commit or roll back together and never drift apart.
 
+const { ApiError } = require('../utils/asyncHandler');
+
 const EPSILON = 0.005; // half a cent, to tolerate floating-point rounding on NUMERIC->JS number round-trips
 
 async function nextEntryNumber(client) {
@@ -10,6 +12,13 @@ async function nextEntryNumber(client) {
     `UPDATE je_sequences SET next_value = next_value + 1 RETURNING next_value - 1 AS issued_value`
   );
   return `JE-${String(rows[0].issued_value).padStart(6, '0')}`;
+}
+
+// A closed fiscal year is locked: nothing may be posted into it (corrections go into the current period).
+async function assertPeriodOpen(client, entryDate) {
+  const { rows } = await client.query(
+    `SELECT name FROM fiscal_years WHERE status = 'closed' AND COALESCE($1::date, CURRENT_DATE) BETWEEN start_date AND end_date LIMIT 1`, [entryDate || null]);
+  if (rows[0]) throw new ApiError(409, `Fiscal year ${rows[0].name} is closed: nothing can be posted into it`);
 }
 
 async function getAccountByCode(client, code) {
@@ -48,12 +57,13 @@ async function postJournalEntry(client, { entryDate, description, source, refere
   const totalDebit = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
   const totalCredit = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
   if (Math.abs(totalDebit - totalCredit) > EPSILON) {
-    throw new Error(`Journal entry does not balance: debits ${totalDebit.toFixed(2)} vs credits ${totalCredit.toFixed(2)}`);
+    throw new ApiError(400, `Journal entry does not balance: debits ${totalDebit.toFixed(2)} vs credits ${totalCredit.toFixed(2)}`);
   }
   if (lines.length < 2) {
-    throw new Error('A journal entry needs at least two lines');
+    throw new ApiError(400, 'A journal entry needs at least two lines');
   }
 
+  await assertPeriodOpen(client, entryDate);
   const entryNumber = await nextEntryNumber(client);
   const { rows: entryRows } = await client.query(
     `INSERT INTO journal_entries (entry_number, entry_date, description, source, reference_type, reference_id, created_by, status)
@@ -67,7 +77,8 @@ async function postJournalEntry(client, { entryDate, description, source, refere
   for (const line of lines) {
     const debit = Number(line.debit || 0);
     const credit = Number(line.credit || 0);
-    if (debit > 0 && credit > 0) throw new Error('A journal line cannot have both a debit and a credit');
+    if (debit < 0 || credit < 0) throw new ApiError(400, 'Journal line amounts cannot be negative');
+    if (debit > 0 && credit > 0) throw new ApiError(400, 'A journal line cannot have both a debit and a credit');
     if (debit === 0 && credit === 0) continue; // skip zero-amount legs (e.g. a $0 delivery fee)
     await client.query(
       `INSERT INTO journal_lines (journal_entry_id, account_id, debit, credit, description, customer_id, supplier_id, cost_center_id, project_id, company_id, branch_id)
@@ -93,11 +104,11 @@ async function reverseJournalEntry(client, { entryId, createdBy, description }) 
   // unique index on reverses_entry_id as a last line of defense for alternate writers.
   const { rows: entryRows } = await client.query('SELECT * FROM journal_entries WHERE id = $1 FOR UPDATE', [entryId]);
   const original = entryRows[0];
-  if (!original) throw new Error(`Journal entry ${entryId} not found`);
-  if (original.status !== 'posted') throw new Error('Only a posted journal entry can be reversed');
+  if (!original) throw new ApiError(404, `Journal entry ${entryId} not found`);
+  if (original.status !== 'posted') throw new ApiError(409, 'Only a posted journal entry can be reversed');
 
   const { rows: alreadyReversed } = await client.query('SELECT id FROM journal_entries WHERE reverses_entry_id = $1', [entryId]);
-  if (alreadyReversed[0]) throw new Error(`${original.entry_number} has already been reversed`);
+  if (alreadyReversed[0]) throw new ApiError(409, `${original.entry_number} has already been reversed`);
 
   const { rows: lines } = await client.query('SELECT * FROM journal_lines WHERE journal_entry_id = $1', [entryId]);
   const flippedLines = lines.map((l) => ({
@@ -111,17 +122,20 @@ async function reverseJournalEntry(client, { entryId, createdBy, description }) 
     source: 'system', referenceType: original.reference_type, referenceId: original.reference_id,
     createdBy, lines: flippedLines
   });
-  await client.query('UPDATE journal_entries SET reverses_entry_id = $1, is_reversal = true WHERE id = $2', [entryId, reversal.id]);
-  return reversal;
+  const { rows: marked } = await client.query('UPDATE journal_entries SET reverses_entry_id = $1, is_reversal = true WHERE id = $2 RETURNING *', [entryId, reversal.id]);
+  return marked[0] || reversal;
 }
 
 // Promotes a saved draft to posted — the moment it starts counting in every balance.
 async function promoteToPosted(client, entryId) {
+  const draft = (await client.query(`SELECT entry_date FROM journal_entries WHERE id = $1 AND status = 'draft' FOR UPDATE`, [entryId])).rows[0];
+  if (!draft) throw new ApiError(409, 'Journal entry not found or not a draft');
+  await assertPeriodOpen(client, draft.entry_date);
   const { rows } = await client.query(
     `UPDATE journal_entries SET status = 'posted' WHERE id = $1 AND status = 'draft' RETURNING *`,
     [entryId]
   );
-  if (!rows[0]) throw new Error('Journal entry not found or not a draft');
+  if (!rows[0]) throw new ApiError(409, 'Journal entry not found or not a draft');
   return rows[0];
 }
 

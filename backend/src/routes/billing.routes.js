@@ -471,7 +471,7 @@ router.post('/payments', requireRole(...RECEIVE_PAYMENT_ROLES), asyncHandler(asy
     const { rows: openOrders } = await client.query(
       `SELECT so.id, so.total_amount, ${BALANCE_SQL} AS balance
        FROM sales_orders so
-       WHERE so.customer_id = $1 AND so.status NOT IN ('cancelled','reversed') ${deptFilterSql}
+       WHERE so.customer_id = $1 AND so.status NOT IN ('pending','cancelled','reversed') ${deptFilterSql}
        ORDER BY so.order_date ASC, so.id ASC FOR UPDATE`,
       [customer_id, ...deptFilterParams]
     );
