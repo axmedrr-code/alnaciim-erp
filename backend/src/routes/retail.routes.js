@@ -18,7 +18,9 @@ const { requireRole } = require('../middleware/auth');
 const { PERM } = require('../middleware/permissions');
 const { postStockMovement } = require('../utils/stockLedger');
 const { logAudit } = require('../services/auditService');
-const { createSalesOrderFromItems, postCreditApprovalRevenue } = require('./sales.routes');
+const { streamInvoicePdf } = require('../utils/invoicePdf');
+const { createSalesOrderFromItems, postCreditApprovalRevenue, getOrderWithItems } = require('./sales.routes');
+const { buildRetailCustomerSearch } = require('../services/retailCustomerSearch');
 
 const router = Router();
 
@@ -58,6 +60,43 @@ router.get('/products', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req
      WHERE c.name = ANY($1) AND p.is_active = true
      ORDER BY p.name`,
     [dept.categories]
+  );
+  res.json({ data: rows, error: null });
+}));
+
+router.get('/warehouses', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req, res) => {
+  const dept = findDepartment(req.query.department);
+  if (!dept) throw new ApiError(400, 'department must be bottled_water or ice');
+  const { rows } = await pool.query(
+    `SELECT DISTINCT w.id, w.code, w.name
+     FROM warehouses w
+     JOIN stock_levels sl ON sl.warehouse_id = w.id AND sl.quantity > 0
+     JOIN products p ON p.id = sl.product_id AND p.is_active = true
+     JOIN categories c ON c.id = p.category_id
+     WHERE w.is_active = true AND c.name = ANY($1)
+     ORDER BY w.name`,
+    [dept.categories]
+  );
+  res.json({ data: rows, error: null });
+}));
+
+// Customer picker for the retail POS. Keep this bounded: customer tables can
+// contain tens of thousands of records, and Cashier should only receive the
+// minimal identity fields needed to create a retail invoice.
+router.get('/customers/search', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req, res) => {
+  const search = buildRetailCustomerSearch(req.query.q);
+  if (!search) return res.json({ data: [], error: null });
+  const { rows } = await pool.query(
+    `SELECT c.id, c.name, c.hno, c.phone
+     FROM customers c
+     WHERE c.status = 'active'
+       AND (c.name ILIKE $1 OR COALESCE(c.phone, '') ILIKE $1
+            OR regexp_replace(COALESCE(c.hno, ''), '[,\\s]', '', 'g') ILIKE $2)
+     ORDER BY CASE
+       WHEN regexp_replace(COALESCE(c.hno, ''), '[,\\s]', '', 'g') = $3 THEN 0
+       WHEN c.name ILIKE $1 THEN 1 ELSE 2 END, c.name
+     LIMIT 20`,
+    [search.likeQuery, search.compactLikeQuery, search.compactQuery]
   );
   res.json({ data: rows, error: null });
 }));
@@ -132,7 +171,8 @@ router.get('/sales', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req, r
 
   if (department && department !== 'all') {
     const dept = findDepartment(department);
-    if (dept) { params.push(dept.categories); conditions.push(retailOrderExistsSql('so', params.length)); }
+    if (!dept) throw new ApiError(400, 'department must be bottled_water, ice, or all');
+    params.push(dept.categories); conditions.push(retailOrderExistsSql('so', params.length));
   }
   if (status) { params.push(status); conditions.push(`so.status = $${params.length}`); }
   if (search) {
@@ -160,6 +200,19 @@ router.get('/sales', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req, r
   res.json({ data: rows, error: null });
 }));
 
+router.get('/sales/:id/invoice', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req, res) => {
+  const order = await getOrderWithItems(req.params.id);
+  if (!order) throw new ApiError(404, 'Retail invoice not found');
+  const { rows } = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM sales_orders so WHERE so.id = $2 AND ${retailOrderExistsSql('so', 1)}
+     ) AS is_retail`,
+    [ALL_RETAIL_CATEGORIES, req.params.id]
+  );
+  if (!rows[0].is_retail) throw new ApiError(404, 'Retail invoice not found');
+  streamInvoicePdf(res, order);
+}));
+
 // ---------------------------------------------------------------------
 // 5. Customer Statement extras — the retail-specific slice (purchase
 // history + last purchase) that the existing, department-agnostic
@@ -167,7 +220,10 @@ router.get('/sales', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req, r
 // still comes from that existing endpoint — never duplicated here.
 // ---------------------------------------------------------------------
 router.get('/customers/:id/profile', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req, res) => {
-  const reqDept = req.query.department && req.query.department !== 'all' ? findDepartment(req.query.department) : null;
+  const departmentKey = req.query.department;
+  const reqDept = departmentKey && departmentKey !== 'all' ? findDepartment(departmentKey) : null;
+  if (departmentKey && departmentKey !== 'all' && !reqDept)
+    throw new ApiError(400, 'department must be bottled_water, ice, or all');
   const params = [reqDept ? reqDept.categories : ALL_RETAIL_CATEGORIES];
   const deptCondition = retailOrderExistsSql('so', 1);
 
@@ -209,11 +265,50 @@ router.get('/customers/:id/profile', requireRole(...PERM.RETAIL_OPS), asyncHandl
   });
 }));
 
+// Cashier-safe customer ledger: retail invoices and their payments only.
+// Never use the department-agnostic customer statement for retail users,
+// since that would disclose Bulk Water receivables to a Cashier.
+router.get('/customers/:id/statement', requireRole(...PERM.RETAIL_OPS), asyncHandler(async (req, res) => {
+  const customerId = Number(req.params.id);
+  const { rows: customerRows } = await pool.query(
+    `SELECT id, hno, name, phone FROM customers WHERE id = $1`, [customerId]
+  );
+  if (!customerRows[0]) throw new ApiError(404, 'Customer not found');
+
+  const { rows } = await pool.query(
+    `SELECT entry_date, entry_type, reference, amount, sales_order_id, payment_id FROM (
+       SELECT so.order_date AS entry_date, 'invoice' AS entry_type,
+              COALESCE(so.invoice_hno, so.order_number) AS reference, so.total_amount AS amount,
+              so.created_at AS sort_key, so.id AS sales_order_id, NULL::int AS payment_id
+       FROM sales_orders so
+       WHERE so.customer_id = $1 AND so.status NOT IN ('cancelled','reversed')
+         AND ${retailOrderExistsSql('so', 2)}
+       UNION ALL
+       SELECT p.payment_date AS entry_date, 'payment' AS entry_type,
+              COALESCE(p.transaction_hno, so.order_number) AS reference, -p.amount AS amount,
+              (p.payment_date::timestamp AT TIME ZONE 'UTC') AS sort_key, so.id AS sales_order_id, p.id AS payment_id
+       FROM payments p JOIN sales_orders so ON so.id = p.sales_order_id
+       WHERE so.customer_id = $1 AND p.voided_at IS NULL AND ${retailOrderExistsSql('so', 2)}
+     ) ledger ORDER BY entry_date, sort_key`,
+    [customerId, ALL_RETAIL_CATEGORIES]
+  );
+
+  let balance = 0;
+  const statement = rows.map((entry) => {
+    balance += Number(entry.amount);
+    return { ...entry, running_balance: balance };
+  });
+  res.json({ data: { customer: customerRows[0], statement, closing_balance: balance }, error: null });
+}));
+
 // ---------------------------------------------------------------------
 // 8. Reports
 // ---------------------------------------------------------------------
 function deptParams(req) {
-  const dept = req.query.department && req.query.department !== 'all' ? findDepartment(req.query.department) : null;
+  const departmentKey = req.query.department;
+  const dept = departmentKey && departmentKey !== 'all' ? findDepartment(departmentKey) : null;
+  if (departmentKey && departmentKey !== 'all' && !dept)
+    throw new ApiError(400, 'department must be bottled_water, ice, or all');
   const params = [dept ? dept.categories : ALL_RETAIL_CATEGORIES];
   return { params, condition: retailOrderExistsSql('so', 1) };
 }

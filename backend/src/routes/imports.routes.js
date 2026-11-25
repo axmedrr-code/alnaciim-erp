@@ -23,6 +23,7 @@ const { pool } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
 const { logAudit } = require('../services/auditService');
+const { safeCustomerImportFailure } = require('../services/customerImportErrors');
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -119,29 +120,41 @@ router.post('/customers/import', requireRole('Admin', 'Sales Manager'), upload.s
   for (const row of candidates) {
     const status = normalizeStatus(row.status);
     try {
-      const { rows: existingRows } = await pool.query(`SELECT id FROM customers WHERE hno = $1`, [row.hno]);
-      const existing = existingRows[0];
-
-      if (existing) {
-        // HNO itself is never part of this UPDATE's SET list — it cannot change.
-        await pool.query(
-          `UPDATE customers SET name = $1, phone = $2, guarantor_name = $3, guarantor_phone = $4, status = $5 WHERE id = $6`,
-          [row.name, row.customer_phone || null, row.guarantor_name || null, row.guarantor_phone || null, status, existing.id]
-        );
+      // Existing customers are the common re-import case, so update directly
+      // by immutable HNO with one round-trip. The upsert handles a concurrent
+      // insert race without ever changing HNO or duplicating the customer.
+      const { rows: updatedRows } = await pool.query(
+        `UPDATE customers SET name = $1, phone = $2, guarantor_name = $3, guarantor_phone = $4, status = $5 WHERE hno = $6 RETURNING id`,
+        [row.name, row.customer_phone || null, row.guarantor_name || null, row.guarantor_phone || null, status, row.hno]
+      );
+      if (updatedRows[0]) {
         updated++;
         continue;
       }
 
-      const { rows: newCust } = await pool.query(
+      const { rows: insertedRows } = await pool.query(
         `INSERT INTO customers (code, hno, name, type, phone, guarantor_name, guarantor_phone, status)
-         VALUES ($1,$2,$3,'retail',$4,$5,$6,$7) RETURNING id`,
+         VALUES ($1,$2,$3,'retail',$4,$5,$6,$7)
+         ON CONFLICT (hno) DO NOTHING RETURNING id`,
         [row.hno, row.hno, row.name, row.customer_phone || null, row.guarantor_name || null, row.guarantor_phone || null, status]
       );
-      const customerId = newCust[0].id;
-      await pool.query(`UPDATE customers SET code = $1 WHERE id = $2`, [`CUST-${String(customerId).padStart(4, '0')}`, customerId]);
-      imported++;
+      if (insertedRows[0]) {
+        const customerId = insertedRows[0].id;
+        await pool.query(`UPDATE customers SET code = $1 WHERE id = $2`, [`CUST-${String(customerId).padStart(4, '0')}`, customerId]);
+        imported++;
+      } else {
+        // Another import may have inserted this HNO between the UPDATE and
+        // INSERT. Re-read/update it as a normal customer refresh.
+        const { rows: racedUpdate } = await pool.query(
+          `UPDATE customers SET name = $1, phone = $2, guarantor_name = $3, guarantor_phone = $4, status = $5 WHERE hno = $6 RETURNING id`,
+          [row.name, row.customer_phone || null, row.guarantor_name || null, row.guarantor_phone || null, status, row.hno]
+        );
+        if (!racedUpdate[0]) throw new Error('Customer HNO conflict could not be resolved');
+        updated++;
+      }
     } catch (err) {
-      errors.push(errorRow(row, 'Database error', err.message));
+      const safeFailure = safeCustomerImportFailure(err);
+      errors.push(errorRow(row, safeFailure.reason, safeFailure.fix));
     }
   }
 
@@ -181,7 +194,7 @@ router.post('/customers/error-report', requireRole('Admin', 'Sales Manager'), as
 // Downloadable starter template — header row + one worked example, matching
 // exactly the columns this endpoint parses.
 router.get('/customers/template', requireRole('Admin', 'Sales Manager'), asyncHandler(async (req, res) => {
-  const example = ['HNO-1001', 'Jane Customer', '+252-61-2345678', '', '', 'Active'];
+  const example = ['1001', 'Jane Customer', '7793418', '', '', 'Active'];
   const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_COLUMNS, example]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Customers');

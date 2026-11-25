@@ -34,6 +34,8 @@ export default function BatchesTab({ productionType }) {
   const [completingId, setCompletingId] = useState(null);
   const [actualQty, setActualQty] = useState('');
   const [wastageQty, setWastageQty] = useState('');
+  const [wastageNotes, setWastageNotes] = useState('');
+  const [varianceNotes, setVarianceNotes] = useState('');
   const [materialsWarehouseId, setMaterialsWarehouseId] = useState('');
   const [qcStatus, setQcStatus] = useState('');
   const [completeError, setCompleteError] = useState(null);
@@ -100,19 +102,34 @@ export default function BatchesTab({ productionType }) {
       await client.put(`/production/batches/${id}/complete`, {
         actual_qty: Number(actualQty),
         wastage_qty: Number(wastageQty) || 0,
+        wastage_notes: wastageNotes || undefined,
+        variance_notes: varianceNotes || undefined,
         materials_warehouse_id: materialsWarehouseId ? Number(materialsWarehouseId) : undefined,
         qc_status: qcStatus
       });
       setCompletingId(null);
       setActualQty('');
       setWastageQty('');
+      setWastageNotes('');
+      setVarianceNotes('');
       setMaterialsWarehouseId('');
       setQcStatus('');
-      flashSuccess(qcStatus === 'passed' ? 'Batch completed — stock received into the destination warehouse.' : 'Batch completed — QC did not pass, no stock was added.');
+      flashSuccess(qcStatus === 'passed' ? 'Batch completed — output awaits independent approval before entering stock.' : 'Batch completed — QC did not pass, no stock was added.');
       reload();
     } catch (err) {
       setCompleteError(err.response?.data?.error || 'Failed to complete batch');
     }
+  }
+
+  async function decideOutput(batch, decision) {
+    const reason = window.prompt(`${decision === 'approve' ? 'Approval' : 'Rejection'} reason for ${batch.batch_number} (required):`);
+    if (reason === null) return;
+    if (reason.trim().length < 3) { setError('Enter a reason of at least 3 characters.'); return; }
+    try {
+      await client.post(`/production/batches/${batch.id}/output-decision`, { decision, reason });
+      flashSuccess(decision === 'approve' ? 'Production output approved and posted to inventory.' : 'Production output rejected; no finished goods were posted.');
+      reload();
+    } catch (err) { setError(err.response?.data?.error || 'Could not decide production output.'); }
   }
 
   return (
@@ -149,17 +166,17 @@ export default function BatchesTab({ productionType }) {
               </select>
             </div>
             <div className="form-field">
-              <label>Output Product{form.production_type === 'RO_WATER' ? '' : ' (optional)'}</label>
-              <select required={form.production_type === 'RO_WATER'} value={form.product_id} onChange={(e) => setForm({ ...form, product_id: e.target.value })}>
-                <option value="">{form.production_type === 'RO_WATER' ? 'Select…' : '(bulk / none)'}</option>
+              <label>Output Product</label>
+              <select required value={form.product_id} onChange={(e) => setForm({ ...form, product_id: e.target.value })}>
+                <option value="">Select…</option>
                 {products?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
             <div className="form-field">
-              <label>Destination Warehouse{form.production_type === 'RO_WATER' ? '' : ' (optional)'}</label>
-              <select required={form.production_type === 'RO_WATER'} value={form.destination_warehouse_id} onChange={(e) => setForm({ ...form, destination_warehouse_id: e.target.value })}>
+              <label>Finished Goods Warehouse</label>
+              <select required value={form.destination_warehouse_id} onChange={(e) => setForm({ ...form, destination_warehouse_id: e.target.value })}>
                 <option value="">Select…</option>
-                {warehouses?.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                {warehouses?.filter((w) => w.is_active && w.type === 'finished_goods').map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
               {form.production_type === 'RO_WATER' && (
                 <span className="muted" style={{ fontSize: 11 }}>RO Water production must receipt into the Finished Water Warehouse to be loadable onto a tanker.</span>
@@ -206,8 +223,11 @@ export default function BatchesTab({ productionType }) {
               }
             },
             { key: 'wastage_qty', header: 'Wastage', render: (r) => Number(r.wastage_qty) > 0 ? Number(r.wastage_qty) : '—' },
+            { key: 'production_variance', header: 'Variance', render: (r) => r.actual_qty == null ? '—' : `${Number(r.actual_qty) - Number(r.planned_qty)} ${r.unit}` },
             { key: 'status', header: 'Status', render: (r) => <span className={`badge badge--${STATUS_BADGE[r.status]}`}>{r.status.replace('_', ' ')}</span> },
             { key: 'qc_status', header: 'QC Status', render: (r) => r.status === 'completed' || r.status === 'reversed' ? <span className={`badge badge--${QC_BADGE[r.qc_status]}`}>{r.qc_status}</span> : '—' },
+            { key: 'output_approval_status', header: 'Output Approval', render: (r) => r.output_approval_status === 'pending'
+              ? <span className="badge badge--pending">Pending</span> : (r.output_approval_status || 'legacy').replace('_', ' ') },
             canManage && {
               key: 'actions', header: '', sortable: false, render: (b) => (
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -218,6 +238,10 @@ export default function BatchesTab({ productionType }) {
                     </>
                   )}
                   {b.status === 'completed' && <button className="btn secondary" onClick={() => reverseBatch(b)}><RotateCcw size={13} /> Reverse</button>}
+                  {b.output_approval_status === 'pending' && <>
+                    <button className="btn" onClick={() => decideOutput(b, 'approve')}>Approve Output</button>
+                    <button className="btn secondary" onClick={() => decideOutput(b, 'reject')}>Reject Output</button>
+                  </>}
                   {b.status === 'planned' && <button className="btn secondary" onClick={() => startBatch(b.id)}><Play size={13} /> Start</button>}
                   {b.status === 'in_progress' && completingId !== b.id && (
                     <button className="btn secondary" onClick={() => setCompletingId(b.id)}><PackageCheck size={13} /> Complete</button>
@@ -227,20 +251,24 @@ export default function BatchesTab({ productionType }) {
                       <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                         <input style={{ width: 80 }} type="number" step="0.001" placeholder="Actual qty" value={actualQty} onChange={(e) => setActualQty(e.target.value)} />
                         <input style={{ width: 80 }} type="number" step="0.001" placeholder="Wastage" value={wastageQty} onChange={(e) => setWastageQty(e.target.value)} />
+                        <input style={{ width: 140 }} placeholder="Variance reason" value={varianceNotes} onChange={(e) => setVarianceNotes(e.target.value)} />
+                        <input style={{ width: 140 }} placeholder="Wastage notes" value={wastageNotes} onChange={(e) => setWastageNotes(e.target.value)} />
                         <select style={{ width: 130 }} value={materialsWarehouseId} onChange={(e) => setMaterialsWarehouseId(e.target.value)}>
                           <option value="">Materials from…</option>
-                          {warehouses?.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                          {warehouses?.filter((w) => w.is_active && w.type === 'raw_material').map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                         </select>
                         <select style={{ width: 110 }} value={qcStatus} onChange={(e) => setQcStatus(e.target.value)}>
                           <option value="">QC Status…</option>
                           <option value="passed">Passed</option>
                           <option value="failed">Failed</option>
-                          <option value="pending">Pending</option>
                         </select>
                         <button className="btn" disabled={!actualQty} onClick={() => completeBatch(b.id)}>Confirm</button>
                       </span>
                       {qcStatus === 'failed' && (
                         <span style={{ fontSize: 11, color: 'var(--danger)' }}>Failed QC — this batch will complete, but no stock will be added.</span>
+                      )}
+                      {qcStatus === 'passed' && (
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Passed QC output will wait for a different authorized user to approve the stock receipt.</span>
                       )}
                       {completeError && <span style={{ fontSize: 11, color: 'var(--danger)' }}>{completeError}</span>}
                     </span>

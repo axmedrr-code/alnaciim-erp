@@ -97,6 +97,7 @@ function DeliveryCard({ delivery, onChanged }) {
 export default function DriverPage() {
   const { user } = useAuth();
   const { rows, reload } = useApi(`/sales/deliveries?driver_id=${user.id}`);
+  const { rows: paymentStatuses } = useApi('/billing/driver/payment-status');
   const active = rows?.filter((d) => ['scheduled', 'in_transit'].includes(d.status));
   const completedToday = rows?.filter((d) => d.status === 'delivered' && d.confirmed_at && new Date(d.confirmed_at).toDateString() === new Date().toDateString());
 
@@ -104,6 +105,20 @@ export default function DriverPage() {
     <div style={{ maxWidth: 480, margin: '0 auto' }}>
       <div className="page-header"><h1>My Deliveries</h1></div>
       <p className="muted">{user?.fullName}</p>
+
+      {!!paymentStatuses?.length && (
+        <section className="card" aria-label="Read-only customer payment status">
+          <h3 style={{ marginTop: 0 }}>Customer Payment Status <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>Read-only · active route</span></h3>
+          {paymentStatuses.map((customer) => (
+            <div key={customer.customer_id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+              <div><strong>{customer.customer_name}</strong><div className="muted">HNO {customer.hno}{customer.last_payment_date ? ` · Last payment ${String(customer.last_payment_date).slice(0, 10)}` : ''}</div></div>
+              <strong style={{ whiteSpace: 'nowrap', color: Number(customer.outstanding_balance) > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                ${Number(customer.outstanding_balance || 0).toFixed(2)}
+              </strong>
+            </div>
+          ))}
+        </section>
+      )}
 
       {!active?.length && <p className="muted">No active deliveries assigned right now.</p>}
       {active?.map((d) => <DeliveryCard key={d.id} delivery={d} onChanged={reload} />)}

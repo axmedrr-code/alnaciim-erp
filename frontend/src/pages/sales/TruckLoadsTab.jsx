@@ -281,6 +281,7 @@ function ReconcileModal({ load, onClose, onDone }) {
   const previousRemaining = Number(load.quantity_loaded) - Number(load.delivered_liters);
   const [matches, setMatches] = useState(true);
   const [actualRemaining, setActualRemaining] = useState(String(previousRemaining));
+  const [returnedLiters, setReturnedLiters] = useState('0');
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState(null);
@@ -290,10 +291,14 @@ function ReconcileModal({ load, onClose, onDone }) {
     e.preventDefault();
     setError(null);
     const actual = matches ? previousRemaining : Number(actualRemaining);
-    if (!matches && (reason === '' )) {
+    const returned = Number(returnedLiters) || 0;
+    if ((!matches || returned > 0) && reason === '') {
       setError('Select a reason for the difference');
       return;
     }
+    if (returned > actual) { setError('Returned liters cannot exceed physical water remaining.'); return; }
+    if (returned > 0 && reason !== 'returned_to_warehouse') { setError('Choose “Returned to warehouse” for returned water.'); return; }
+    if (reason === 'returned_to_warehouse' && returned <= 0) { setError('Enter the number of liters returned to the warehouse.'); return; }
     if (!matches && reason === 'other' && !note.trim()) {
       setError('A note is required when the reason is "Other"');
       return;
@@ -302,8 +307,9 @@ function ReconcileModal({ load, onClose, onDone }) {
     try {
       await client.post(`/sales/truck-loads/${load.id}/reconcile`, {
         actual_remaining: actual,
-        reason: matches ? undefined : reason,
-        note: matches ? undefined : note
+        returned_liters: returned,
+        reason: (!matches || returned > 0) ? reason : undefined,
+        note: (!matches || returned > 0) ? note : undefined
       });
       onDone();
     } catch (err) {
@@ -328,16 +334,23 @@ function ReconcileModal({ load, onClose, onDone }) {
 
       {!matches && (
         <>
-          <label>Actual Remaining<input type="number" step="0.01" min="0" value={actualRemaining} onChange={(e) => setActualRemaining(e.target.value)} /></label>
-          <label>Reason
-            <select required value={reason} onChange={(e) => setReason(e.target.value)}>
-              <option value="">Select…</option>
-              {Object.entries(REASON_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
-          </label>
-          <label style={{ gridColumn: '1/-1' }}>Note{reason === 'other' ? ' (required)' : ''}<input value={note} onChange={(e) => setNote(e.target.value)} /></label>
+          <label>Actual Remaining<input type="number" step="0.01" min="0" max={load.quantity_loaded} required value={actualRemaining} onChange={(e) => setActualRemaining(e.target.value)} /></label>
         </>
       )}
+      <label>Return to Finished Water Warehouse (L)
+        <input type="number" step="0.01" min="0" max={matches ? previousRemaining : (Number(actualRemaining) || 0)} value={returnedLiters}
+          onChange={(e) => { setReturnedLiters(e.target.value); if (Number(e.target.value) > 0) setReason('returned_to_warehouse'); }} />
+      </label>
+      {(!matches || Number(returnedLiters) > 0) && <>
+        <label>Reason
+          <select required value={reason} onChange={(e) => setReason(e.target.value)}>
+            <option value="">Select…</option>
+            {Object.entries(REASON_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </label>
+        <label style={{ gridColumn: '1/-1' }}>Note{reason === 'other' ? ' (required)' : ''}<input value={note} onChange={(e) => setNote(e.target.value)} /></label>
+      </>}
+      {Number(returnedLiters) > 0 && <p className="muted" style={{ gridColumn: '1/-1' }}>Returned liters will be received back into Finished Water Warehouse; any unreturned water stays on the truck.</p>}
 
       <div>
         <button className="btn" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Confirm & Continue'}</button>
@@ -363,7 +376,7 @@ function RouteSessionHistory() {
         <thead>
           <tr>
             <th>Truck</th><th>Driver</th><th>Opened By</th><th>Closed By</th>
-            <th>Loaded</th><th>Delivered</th><th>Remaining</th><th>Adjustment</th><th>Close Date</th>
+            <th>Loaded</th><th>Delivered</th><th>Returned</th><th>Remaining</th><th>Adjustment</th><th>Close Date</th>
           </tr>
         </thead>
         <tbody>
@@ -375,6 +388,7 @@ function RouteSessionHistory() {
               <td>{r.closed_by_name || (r.status === 'completed' ? 'Sold out — no adjustment needed' : '—')}</td>
               <td>{Number(r.loaded_liters).toLocaleString()}</td>
               <td>{Number(r.delivered_liters).toLocaleString()}</td>
+              <td>{Number(r.returned_liters || 0).toLocaleString()}</td>
               <td>{Number(r.remaining_liters).toLocaleString()}</td>
               <td style={{ color: r.difference != null && Number(r.difference) !== 0 ? 'var(--danger)' : undefined }}>
                 {r.difference != null ? `${Number(r.difference).toLocaleString()} (${REASON_LABEL[r.reason] || r.reason})` : '—'}

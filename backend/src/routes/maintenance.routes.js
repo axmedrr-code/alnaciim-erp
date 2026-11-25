@@ -7,6 +7,7 @@ const { postStockMovement } = require('../utils/stockLedger');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { resolveCostCenterId } = require('../services/accountingService');
+const { logAudit } = require('../services/auditService');
 
 const router = Router();
 
@@ -30,12 +31,16 @@ router.get('/schedules', requireRole(...PERM.MAINTENANCE_VIEW), asyncHandler(asy
 
 router.post('/schedules', requireRole('Admin', 'Production Manager', 'Technician'), validate(schemas.maintenanceScheduleCreate), asyncHandler(async (req, res) => {
   const { machine_id, maintenance_type, frequency_days, last_done_date, next_due_date, assigned_to, description } = req.body;
-  const { rows } = await pool.query(
-    `INSERT INTO maintenance_schedules (machine_id, maintenance_type, frequency_days, last_done_date, next_due_date, assigned_to, description)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [machine_id, maintenance_type, frequency_days || null, last_done_date || null, next_due_date || null, assigned_to || null, description || null]
-  );
-  res.status(201).json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO maintenance_schedules (machine_id, maintenance_type, frequency_days, last_done_date, next_due_date, assigned_to, description)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [machine_id, maintenance_type, frequency_days || null, last_done_date || null, next_due_date || null, assigned_to || null, description || null]
+    );
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'maintenance_schedule', entityId: rows[0].id, newValue: rows[0] });
+    return rows[0];
+  });
+  res.status(201).json({ data: result, error: null });
 }));
 
 router.get('/logs', requireRole(...PERM.MAINTENANCE_VIEW), asyncHandler(async (req, res) => {
@@ -87,6 +92,11 @@ router.post('/logs', requireRole('Admin', 'Production Manager', 'Technician'), v
         [schedule_id]
       );
     }
+
+    await logAudit(client, {
+      userId: req.user.id, action: 'CREATE', entityType: 'maintenance_log', entityId: log.id,
+      newValue: { ...log, parts_used: parts_used || [] }
+    });
 
     return log;
   });

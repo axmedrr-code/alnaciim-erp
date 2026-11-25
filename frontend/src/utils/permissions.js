@@ -4,12 +4,16 @@ export const PERM = {
   FINANCE: ['Admin', 'Finance Officer'],
   SALES_FIN: ['Admin', 'Finance Officer', 'Sales Manager'],
   INVENTORY_VIEW: ['Admin', 'Inventory Manager', 'Storekeeper', 'Production Manager', 'Sales Manager', 'Finance Officer', 'Operation Manager'],
+  WAREHOUSE_VIEW: ['Admin', 'Inventory Manager', 'Storekeeper', 'Production Manager', 'Sales Manager', 'Finance Officer', 'Operation Manager', 'Procurement Officer', 'Technician'],
+  TANK_VIEW: ['Admin', 'Sales Manager', 'Route Supervisor', 'Supervisor', 'Finance Officer'],
+  PRODUCT_PRICE_VIEW: ['Admin', 'Sales Manager', 'Finance Officer', 'Inventory Manager'],
+  PRODUCT_COST_VIEW: ['Admin', 'Finance Officer', 'Inventory Manager', 'Production Manager', 'Procurement Officer', 'Operation Manager'],
   PRODUCTION_VIEW: ['Admin', 'Production Manager', 'Technician', 'Inventory Manager', 'Sales Manager', 'Finance Officer', 'Operation Manager'],
   PRODUCTION_COST: ['Admin', 'Production Manager', 'Finance Officer'],
   MAINTENANCE_VIEW: ['Admin', 'Production Manager', 'Technician'],
   PROCUREMENT_VIEW: ['Admin', 'Procurement Officer', 'Storekeeper', 'Finance Officer', 'Inventory Manager', 'Operation Manager'],
   FIELD_PERF: ['Admin', 'Sales Manager', 'Route Supervisor', 'Supervisor', 'Finance Officer'],
-  BILLING_VIEW: ['Admin', 'Finance Officer', 'Collector', 'Sales Manager', 'Cashier', 'Route Supervisor', 'Supervisor'],
+  BILLING_VIEW: ['Admin', 'Finance Officer', 'Collector', 'Sales Manager', 'Route Supervisor', 'Supervisor'],
   RETAIL_OPS: ['Admin', 'Sales Manager', 'Cashier', 'Finance Officer'],
   RETAIL_REPORT: ['Admin', 'Sales Manager', 'Finance Officer']
 };

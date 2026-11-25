@@ -1,6 +1,6 @@
 # Procurement Management Module — Implementation Plan (TEST only)
 
-Status: **plan for approval** · Branch: `feature/procurement-module` · Scope: Alnaciim ERP only (no Odoo/WMS/Railway/production).
+Status: **implementation present; database-backed end-to-end TEST/UAT not verified** · Scope: Alnaciim ERP only. This document does not establish deployment or production readiness.
 
 ## 1. What already exists (inspected, not assumed)
 | Area | Existing (kept and extended — no duplicate systems) |
@@ -74,3 +74,14 @@ Workflow end-to-end (PR→…→payment→closure); every state transition + ill
 3. **Digital signature:** server-side signature record (user, role, timestamp, SHA-256 of the document snapshot, shown on the PO/PR) ★ — not a hand-drawn image.
 4. **Attachments:** stored in the database (≤5 MB) ★ because Render's disk is ephemeral.
 5. **Payment threshold** requiring Operation Manager approval: configurable, default 500 ★.
+
+## 11. Current repository evidence (2026-11-23)
+
+- Procurement requisition, sourcing/quotation, PO authorization, receiving, material issuing, supplier-invoice matching, and payment-voucher code is present under `backend/src/routes/` and `frontend/src/pages/procurement/`.
+- Database changes are represented by migrations 026–030 and mirrored in `database/schema.sql`.
+- Isolated database-backed workflow tests exist for phases 1, 2, 3, and 5. They require `TEST_DATABASE_URL` pointing to a dedicated test database; they have **not** been run in this workspace because no such test database is configured.
+- Pure unit tests cover invoice matching and shared stock/approval policies. These do not prove PostgreSQL integration, concurrency behavior, full RBAC, or user acceptance.
+- The Operations Manager dashboard and procurement audit endpoints are present, but complete role-by-role UAT and deployment verification remain outstanding.
+- Odoo, WMS, NUWACO, and Railway business-data integrations are not implemented by this procurement scope; Railway appears only in deployment configuration. No API contracts or credentials were found in the current repo, so no integration behavior is claimed.
+
+Treat the module as **implemented but not release-verified** until the isolated database-backed test scripts and staff UAT pass.

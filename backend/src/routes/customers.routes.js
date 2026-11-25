@@ -6,11 +6,20 @@ const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { nextHno } = require('../services/hnoService');
 const { logAudit } = require('../services/auditService');
+const { PERM } = require('../middleware/permissions');
+const { customerReadPolicy } = require('../services/customerReadPolicy');
 
 const router = Router();
+const CUSTOMER_READ_ROLES = [...new Set([...PERM.SALES_FIN, 'Driver', 'Data Entry Operator'])];
+// Full historical customer ledgers are for Sales/Finance management. Collectors
+// use the payment-specific Billing search, and Drivers use only route HNO lookup.
+const CUSTOMER_LEDGER_ROLES = PERM.SALES_FIN;
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', requireRole(...CUSTOMER_READ_ROLES), asyncHandler(async (req, res) => {
   const { type, search, hno, hno_like, limit, qaade_id, status } = req.query;
+  const access = customerReadPolicy(req.user.role, req.query);
+  if (!access) throw new ApiError(400, 'Driver and Data Entry customer lookup requires an HNO');
+  if (access.hnoOnly && search) throw new ApiError(400, 'Driver and Data Entry customer lookup only supports HNO');
   const conditions = [];
   const params = [];
   let suggestOrder = null; // set for the HNO type-ahead (hno_like) only
@@ -51,12 +60,16 @@ router.get('/', asyncHandler(async (req, res) => {
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   // Optional row cap (an integer 1-50, so it is safe to inline); the POS suggestion list uses 8.
-  const rowLimit = Math.min(Math.max(parseInt(limit, 10) || 0, 0), 50);
+  const requestedLimit = Math.min(Math.max(parseInt(limit, 10) || 0, 0), access.maxResults);
+  const rowLimit = access.hnoOnly ? (requestedLimit || access.maxResults) : requestedLimit;
+  const customerColumns = access.hnoOnly
+    ? 'c.id, c.hno, c.name, c.type, c.phone, c.guarantor_name, c.guarantor_phone, c.status'
+    : 'c.*';
   // Real price/liter for Bulk Water, resolved by the customer's own price
   // tier — the same lookup tanks.routes.js uses, since the POS no longer
   // sources price from a tank record at all.
   const { rows } = await pool.query(
-    `SELECT c.*, q.name AS qaade_name, q.qaade_code,
+    `SELECT ${customerColumns}, q.name AS qaade_name, q.qaade_code,
             COALESCE(
               (SELECT pl.unit_price FROM price_lists pl
                JOIN products p ON p.id = pl.product_id JOIN categories cat ON cat.id = p.category_id
@@ -83,7 +96,7 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT c.*, q.name AS qaade_name, q.qaade_code FROM customers c LEFT JOIN qaades q ON q.id = c.qaade_id WHERE c.id = $1`,
     [req.params.id]
@@ -133,7 +146,7 @@ router.put('/:id', requireRole('Admin', 'Sales Manager'), validate(schemas.custo
 
 // Customer account statement: every invoice (debit) and payment (credit) in date order
 // with a running balance — the standard bulk-water customer ledger / open-balance view.
-router.get('/:id/statement', asyncHandler(async (req, res) => {
+router.get('/:id/statement', requireRole(...CUSTOMER_LEDGER_ROLES), asyncHandler(async (req, res) => {
   const { rows: customerRows } = await pool.query('SELECT * FROM customers WHERE id = $1', [req.params.id]);
   if (!customerRows[0]) throw new ApiError(404, 'Customer not found');
 
@@ -160,7 +173,7 @@ router.get('/:id/statement', asyncHandler(async (req, res) => {
 
 // Broader activity timeline (not just financial): orders, dispatches/deliveries, and
 // payments in one feed — "customer activity history" from the legacy system.
-router.get('/:id/activity', asyncHandler(async (req, res) => {
+router.get('/:id/activity', requireRole(...CUSTOMER_LEDGER_ROLES), asyncHandler(async (req, res) => {
   const { rows: customerRows } = await pool.query('SELECT * FROM customers WHERE id = $1', [req.params.id]);
   if (!customerRows[0]) throw new ApiError(404, 'Customer not found');
 

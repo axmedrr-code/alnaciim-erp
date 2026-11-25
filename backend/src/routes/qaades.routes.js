@@ -9,7 +9,7 @@ const { logAudit } = require('../services/auditService');
 
 const router = Router();
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', requireRole(...PERM.FIELD_PERF), asyncHandler(async (req, res) => {
   const { status } = req.query;
   const conditions = [];
   const params = [];
@@ -28,7 +28,7 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', requireRole(...PERM.FIELD_PERF), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT q.*, u.full_name AS collector_name, t.plate_number
      FROM qaades q LEFT JOIN users u ON u.id = q.collector_id LEFT JOIN trucks t ON t.id = q.truck_id

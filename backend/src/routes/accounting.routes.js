@@ -7,6 +7,7 @@ const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { postJournalEntry, getAccountByCode, reverseJournalEntry, promoteToPosted } = require('../services/accountingService');
 const { logAudit } = require('../services/auditService');
+const { chartAccountUpdateViolation } = require('../services/chartOfAccountsPolicy');
 
 const router = Router();
 
@@ -41,11 +42,15 @@ router.get('/chart-of-accounts', requireRole(...PERM.FINANCE), asyncHandler(asyn
 
 router.post('/chart-of-accounts', requireRole(...FINANCE_ROLES), validate(schemas.coaAccountCreate), asyncHandler(async (req, res) => {
   const { code, name, account_type, parent_id } = req.body;
-  const { rows } = await pool.query(
-    `INSERT INTO chart_of_accounts (code, name, account_type, parent_id) VALUES ($1,$2,$3,$4) RETURNING *`,
-    [code, name, account_type, parent_id || null]
-  );
-  res.status(201).json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO chart_of_accounts (code, name, account_type, parent_id) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [code, name, account_type, parent_id || null]
+    );
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'chart_of_account', entityId: rows[0].id, newValue: rows[0] });
+    return rows[0];
+  });
+  res.status(201).json({ data: result, error: null });
 }));
 
 router.put('/chart-of-accounts/:id', requireRole(...FINANCE_ROLES), validate(schemas.coaAccountUpdate), asyncHandler(async (req, res) => {
@@ -55,10 +60,33 @@ router.put('/chart-of-accounts/:id', requireRole(...FINANCE_ROLES), validate(sch
   for (const f of fields) {
     if (req.body[f] !== undefined) { params.push(req.body[f]); updates.push(`${f} = $${params.length}`); }
   }
+  if (!updates.length) throw new ApiError(400, 'No fields to update');
   params.push(req.params.id);
-  const { rows } = await pool.query(`UPDATE chart_of_accounts SET ${updates.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
-  if (!rows[0]) throw new ApiError(404, 'Account not found');
-  res.json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const before = (await client.query('SELECT * FROM chart_of_accounts WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+    if (!before) throw new ApiError(404, 'Account not found');
+    let descendants = [];
+    if (req.body.parent_id !== undefined && req.body.parent_id !== null) {
+      const { rows: descendantRows } = await client.query(
+        `WITH RECURSIVE descendants(id) AS (
+           SELECT id FROM chart_of_accounts WHERE parent_id = $1
+           UNION
+           SELECT account.id FROM chart_of_accounts account JOIN descendants d ON account.parent_id = d.id
+         ) SELECT id FROM descendants`,
+        [before.id]
+      );
+      descendants = descendantRows.map((row) => row.id);
+    }
+    const violation = chartAccountUpdateViolation({
+      accountId: before.id, parentId: req.body.parent_id, descendantIds: descendants,
+      isSystem: before.is_system, isActive: before.is_active, requestedActive: req.body.is_active
+    });
+    if (violation) throw new ApiError(409, violation);
+    const { rows } = await client.query(`UPDATE chart_of_accounts SET ${updates.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
+    await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'chart_of_account', entityId: rows[0].id, oldValue: before, newValue: rows[0] });
+    return rows[0];
+  });
+  res.json({ data: result, error: null });
 }));
 
 // ---- Journal Entries (manual) ----
@@ -199,6 +227,7 @@ router.post('/cash-receipts', requireRole(...FINANCE_ROLES), validate(schemas.ca
         { accountId: other_account_id, debit: 0, credit: amount, customerId: customer_id, supplierId: supplier_id }
       ]
     });
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'journal_entry', entityId: entry.id, newValue: entry });
     return entry;
   });
   res.status(201).json({ data: result, error: null });
@@ -215,6 +244,7 @@ router.post('/cash-payments', requireRole(...FINANCE_ROLES), validate(schemas.ca
         { accountId: cashOrBankAcct, debit: 0, credit: amount, customerId: customer_id, supplierId: supplier_id }
       ]
     });
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'journal_entry', entityId: entry.id, newValue: entry });
     return entry;
   });
   res.status(201).json({ data: result, error: null });
@@ -255,6 +285,8 @@ router.post('/bank-accounts', requireRole(...FINANCE_ROLES), validate(schemas.ba
       `INSERT INTO bank_accounts (name, bank_name, account_number, coa_account_id, opening_balance) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
       [name, bank_name || null, account_number || null, coaRows[0].id, opening_balance || 0]
     );
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'bank_account', entityId: rows[0].id, newValue: rows[0] });
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'chart_of_account', entityId: coaRows[0].id, newValue: coaRows[0] });
     return rows[0];
   });
   res.status(201).json({ data: result, error: null });
@@ -287,13 +319,21 @@ router.get('/budgets', requireRole(...PERM.FINANCE), asyncHandler(async (req, re
 
 router.post('/budgets', requireRole(...FINANCE_ROLES), validate(schemas.budgetCreate), asyncHandler(async (req, res) => {
   const { account_id, fiscal_year_id, period_month, budgeted_amount } = req.body;
-  const { rows } = await pool.query(
-    `INSERT INTO budgets (account_id, fiscal_year_id, period_month, budgeted_amount) VALUES ($1,$2,$3,$4)
-     ON CONFLICT (account_id, fiscal_year_id, period_month) DO UPDATE SET budgeted_amount = EXCLUDED.budgeted_amount
-     RETURNING *`,
-    [account_id, fiscal_year_id, period_month, budgeted_amount]
-  );
-  res.status(201).json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const before = (await client.query(
+      'SELECT * FROM budgets WHERE account_id=$1 AND fiscal_year_id=$2 AND period_month=$3 FOR UPDATE',
+      [account_id, fiscal_year_id, period_month]
+    )).rows[0] || null;
+    const { rows } = await client.query(
+      `INSERT INTO budgets (account_id, fiscal_year_id, period_month, budgeted_amount) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (account_id, fiscal_year_id, period_month) DO UPDATE SET budgeted_amount = EXCLUDED.budgeted_amount
+       RETURNING *`,
+      [account_id, fiscal_year_id, period_month, budgeted_amount]
+    );
+    await logAudit(client, { userId: req.user.id, action: before ? 'UPDATE' : 'CREATE', entityType: 'budget', entityId: rows[0].id, oldValue: before, newValue: rows[0] });
+    return rows[0];
+  });
+  res.status(201).json({ data: result, error: null });
 }));
 
 // ---- Fiscal Years / Year Closing ----
@@ -304,11 +344,15 @@ router.get('/fiscal-years', requireRole(...PERM.FINANCE), asyncHandler(async (re
 
 router.post('/fiscal-years', requireRole(...FINANCE_ROLES), validate(schemas.fiscalYearCreate), asyncHandler(async (req, res) => {
   const { name, start_date, end_date } = req.body;
-  const { rows } = await pool.query(
-    `INSERT INTO fiscal_years (name, start_date, end_date) VALUES ($1,$2,$3) RETURNING *`,
-    [name, start_date, end_date]
-  );
-  res.status(201).json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO fiscal_years (name, start_date, end_date) VALUES ($1,$2,$3) RETURNING *`,
+      [name, start_date, end_date]
+    );
+    await logAudit(client, { userId: req.user.id, action: 'CREATE', entityType: 'fiscal_year', entityId: rows[0].id, newValue: rows[0] });
+    return rows[0];
+  });
+  res.status(201).json({ data: result, error: null });
 }));
 
 // Closing: sums every revenue/expense account's activity within the fiscal year into

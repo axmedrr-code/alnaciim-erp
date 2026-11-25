@@ -8,7 +8,22 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "migrate": "node src/scripts/migrate.js",
-    "seed": "node src/scripts/seed.js"
+    "seed": "node src/scripts/seed.js",
+    "test:procurement:invoice-match": "node --test tests/procurement/phase5.matching.test.js",
+    "test:inventory:stock-ledger": "node --test tests/inventory/stockLedger.test.js",
+    "test:production:output-approval-policy": "node --test tests/production/outputApprovalPolicy.test.js",
+    "test:logistics:truck-return": "node --test tests/production/truckReconciliation.test.js",
+    "test:logistics:schemas": "node --test tests/logistics/logisticsSchemas.test.js",
+    "test:migrations:plan": "node --test tests/migrations/schemaMigrationPlan.test.js",
+    "test:unit": "node --test tests/rbac.test.js tests/deliveryAccessPolicy.test.js tests/billingAccessPolicy.test.js tests/customerReadPolicy.test.js tests/retailCustomerSearch.test.js tests/customerImportErrors.test.js tests/productReadPolicy.test.js tests/accountingReversal.test.js tests/chartOfAccountsPolicy.test.js tests/inventory/stockLedger.test.js tests/procurement/phase5.matching.test.js tests/production/outputApprovalPolicy.test.js tests/production/downtimePolicy.test.js tests/production/truckReconciliation.test.js tests/logistics/logisticsSchemas.test.js tests/migrations/schemaMigrationPlan.test.js",
+    "test:e2e:inventory": "node tests/e2e/inventory.e2e.test.js",
+    "test:e2e:production": "node tests/e2e/production.e2e.test.js",
+    "test:e2e:logistics": "node tests/e2e/logistics.e2e.test.js",
+    "test:e2e:procurement:phase1": "node tests/procurement/phase1.requisitions.test.js",
+    "test:e2e:procurement:phase2": "node tests/procurement/phase2.sourcing.test.js",
+    "test:e2e:procurement:phase3": "node tests/procurement/phase3.receiving.test.js",
+    "test:e2e:procurement:phase5": "node tests/procurement/phase5.supplier-invoices.test.js",
+    "test:procurement:phase5": "node tests/procurement/phase5.supplier-invoices.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

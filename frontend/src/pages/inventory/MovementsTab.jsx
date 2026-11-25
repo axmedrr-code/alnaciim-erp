@@ -5,7 +5,7 @@ import DateFilterBar, { defaultDateRange } from '../../components/DateFilterBar'
 import client from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 
-const EMPTY_FORM = { product_id: '', warehouse_id: '', movement_type: 'ADJUSTMENT', quantity: '', notes: '' };
+const EMPTY_FORM = { product_id: '', warehouse_id: '', movement_type: 'IN', quantity: '', notes: '' };
 
 export default function MovementsTab() {
   const { user } = useAuth();
@@ -72,7 +72,6 @@ export default function MovementsTab() {
             <select value={form.movement_type} onChange={(e) => setForm({ ...form, movement_type: e.target.value })}>
               <option value="IN">IN</option>
               <option value="OUT">OUT</option>
-              <option value="ADJUSTMENT">ADJUSTMENT</option>
             </select>
           </label>
           <label>Quantity<input type="number" step="0.001" required value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} /></label>

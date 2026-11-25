@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { pool, withTransaction } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
 const { requireRole } = require('../middleware/auth');
+const { PERM } = require('../middleware/permissions');
 const { postStockMovement } = require('../utils/stockLedger');
 const { streamInvoicePdf } = require('../utils/invoicePdf');
 const { validate } = require('../middleware/validate');
@@ -9,6 +10,8 @@ const schemas = require('../validation/schemas');
 const { nextHno } = require('../services/hnoService');
 const { logAudit } = require('../services/auditService');
 const { postJournalEntry, getAccountByCode, reverseJournalEntry, resolveCostCenterId } = require('../services/accountingService');
+const { calculateTruckReconciliation } = require('../services/truckReconciliation');
+const { assertDriverOwnsDelivery, assertDriverStatusChange, assertDriverCanConfirm } = require('../services/deliveryAccessPolicy');
 
 async function resolveCashOrBankAccount(client, method, bankAccountId) {
   if (method === 'cash') return (await getAccountByCode(client, '1000')).id;
@@ -20,6 +23,7 @@ async function resolveCashOrBankAccount(client, method, bankAccountId) {
 }
 
 const router = Router();
+const TRUCK_LOAD_VIEW_ROLES = ['Admin', 'Storekeeper', 'Data Entry Operator', 'Sales Manager', 'Route Supervisor', 'Supervisor', 'Finance Officer', 'Inventory Manager', 'Operation Manager'];
 
 function generateOrderNumber() {
   const y = new Date().getFullYear();
@@ -70,7 +74,7 @@ async function getOrderWithItems(id) {
   };
 }
 
-router.get('/orders', asyncHandler(async (req, res) => {
+router.get('/orders', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { status, customer_id, from, to } = req.query;
   const conditions = [];
   const params = [];
@@ -91,13 +95,13 @@ router.get('/orders', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/orders/:id', asyncHandler(async (req, res) => {
+router.get('/orders/:id', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const order = await getOrderWithItems(req.params.id);
   if (!order) throw new ApiError(404, 'Sales order not found');
   res.json({ data: order, error: null });
 }));
 
-router.get('/orders/:id/invoice', asyncHandler(async (req, res) => {
+router.get('/orders/:id/invoice', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const order = await getOrderWithItems(req.params.id);
   if (!order) throw new ApiError(404, 'Sales order not found');
   streamInvoicePdf(res, order);
@@ -418,12 +422,16 @@ router.post('/orders/:id/dispatch', requireRole('Admin', 'Sales Manager'), valid
   res.status(201).json({ data: result, error: null });
 }));
 
-router.get('/deliveries', asyncHandler(async (req, res) => {
+router.get('/deliveries', requireRole(...PERM.FIELD_PERF, 'Driver'), asyncHandler(async (req, res) => {
   const { status, driver_id } = req.query;
   const conditions = [];
   const params = [];
   if (status) { params.push(status); conditions.push(`d.status = $${params.length}`); }
-  if (driver_id) { params.push(driver_id); conditions.push(`d.driver_id = $${params.length}`); }
+  if (req.user.role === 'Driver') {
+    if (driver_id && Number(driver_id) !== Number(req.user.id))
+      throw new ApiError(403, 'Drivers can only view their assigned deliveries');
+    params.push(req.user.id); conditions.push(`d.driver_id = $${params.length}`);
+  } else if (driver_id) { params.push(driver_id); conditions.push(`d.driver_id = $${params.length}`); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const { rows } = await pool.query(
     `SELECT d.*, so.order_number, so.total_amount, t.plate_number, u.full_name AS driver_name,
@@ -444,6 +452,10 @@ router.put('/deliveries/:id/status', requireRole('Admin', 'Sales Manager', 'Driv
   const { status, pod_reference, last_known_lat, last_known_lng } = req.body;
 
   const result = await withTransaction(async (client) => {
+    const { rows: existingRows } = await client.query('SELECT * FROM deliveries WHERE id = $1 FOR UPDATE', [req.params.id]);
+    const existing = existingRows[0];
+    if (!existing) throw new ApiError(404, 'Delivery not found');
+    assertDriverStatusChange(req.user, existing, status);
     const { rows } = await client.query(
       `UPDATE deliveries SET status = $1, pod_reference = COALESCE($2, pod_reference),
               last_known_lat = COALESCE($3, last_known_lat), last_known_lng = COALESCE($4, last_known_lng),
@@ -455,6 +467,8 @@ router.put('/deliveries/:id/status', requireRole('Admin', 'Sales Manager', 'Driv
     if (status === 'delivered') {
       await client.query(`UPDATE sales_orders SET status = 'delivered' WHERE id = $1`, [rows[0].sales_order_id]);
     }
+    await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'delivery', entityId: rows[0].id,
+      oldValue: { status: existing.status }, newValue: rows[0] });
     return rows[0];
   });
 
@@ -472,6 +486,7 @@ router.put('/deliveries/:id/confirm', requireRole('Admin', 'Sales Manager', 'Dri
     const { rows: deliveryRows } = await client.query('SELECT * FROM deliveries WHERE id = $1 FOR UPDATE', [req.params.id]);
     const delivery = deliveryRows[0];
     if (!delivery) throw new ApiError(404, 'Delivery not found');
+    assertDriverCanConfirm(req.user, delivery);
     if (delivery.status === 'delivered') throw new ApiError(400, 'Delivery already confirmed');
 
     const { rows: updatedDelivery } = await client.query(
@@ -500,6 +515,8 @@ router.put('/deliveries/:id/confirm', requireRole('Admin', 'Sales Manager', 'Dri
       await client.query(`UPDATE sales_orders SET status = 'delivered' WHERE id = $1`, [delivery.sales_order_id]);
     }
 
+    await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'delivery', entityId: delivery.id,
+      oldValue: { status: delivery.status, quantity_delivered: delivery.quantity_delivered }, newValue: updatedDelivery[0] });
     return updatedDelivery[0];
   });
 
@@ -507,7 +524,7 @@ router.put('/deliveries/:id/confirm', requireRole('Admin', 'Sales Manager', 'Dri
 }));
 
 // ---- Tanker loading ----
-router.get('/truck-loads', asyncHandler(async (req, res) => {
+router.get('/truck-loads', requireRole(...TRUCK_LOAD_VIEW_ROLES), asyncHandler(async (req, res) => {
   const { truck_id, route_date } = req.query;
   const conditions = [];
   const params = [];
@@ -518,7 +535,7 @@ router.get('/truck-loads', asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT tl.*, t.plate_number, p.name AS product_name, p.unit, w.name AS warehouse_name, u.full_name AS loaded_by_name,
             COALESCE((SELECT SUM(d.quantity_delivered) FROM deliveries d WHERE d.truck_load_id = tl.id), 0) AS quantity_delivered,
-            tl.quantity_loaded - COALESCE((SELECT SUM(d.quantity_delivered) FROM deliveries d WHERE d.truck_load_id = tl.id), 0) AS remaining_balance
+            tl.quantity_loaded - tl.delivered_liters AS remaining_balance
      FROM truck_loads tl
      JOIN trucks t ON t.id = tl.truck_id
      JOIN products p ON p.id = tl.product_id
@@ -530,11 +547,11 @@ router.get('/truck-loads', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/truck-loads/:id', asyncHandler(async (req, res) => {
+router.get('/truck-loads/:id', requireRole(...TRUCK_LOAD_VIEW_ROLES), asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT tl.*, t.plate_number, p.name AS product_name, p.unit,
             COALESCE((SELECT SUM(d.quantity_delivered) FROM deliveries d WHERE d.truck_load_id = tl.id), 0) AS quantity_delivered,
-            tl.quantity_loaded - COALESCE((SELECT SUM(d.quantity_delivered) FROM deliveries d WHERE d.truck_load_id = tl.id), 0) AS remaining_balance
+            tl.quantity_loaded - tl.delivered_liters AS remaining_balance
      FROM truck_loads tl JOIN trucks t ON t.id = tl.truck_id JOIN products p ON p.id = tl.product_id
      WHERE tl.id = $1`,
     [req.params.id]
@@ -595,10 +612,10 @@ async function existingTruckStock(client, truckId) {
   const lastLoad = lastLoadRows[0];
   if (!lastLoad || lastLoad.status === 'loaded') return 0; // no history, or already active — not this code path's concern
   const { rows: reconRows } = await client.query(
-    `SELECT actual_remaining FROM stock_reconciliations WHERE truck_load_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    `SELECT actual_remaining, returned_liters FROM stock_reconciliations WHERE truck_load_id = $1 ORDER BY created_at DESC LIMIT 1`,
     [lastLoad.id]
   );
-  return reconRows[0] ? Number(reconRows[0].actual_remaining) : 0;
+  return reconRows[0] ? Math.max(0, Number(reconRows[0].actual_remaining) - Number(reconRows[0].returned_liters || 0)) : 0;
 }
 
 // Two, and only two, valid ways to open a Route Session:
@@ -683,8 +700,8 @@ router.post('/truck-loads', requireRole(...LOADING_ROLES), validate(schemas.truc
 // the load's own delivered_liters is adjusted so Remaining becomes exactly
 // actual_remaining, and status flips to completed — freeing the truck for its
 // next loading.
-router.post('/truck-loads/:id/reconcile', requireRole(...RECONCILE_APPROVER_ROLES), asyncHandler(async (req, res) => {
-  const { actual_remaining, reason, note } = req.body;
+router.post('/truck-loads/:id/reconcile', requireRole(...RECONCILE_APPROVER_ROLES), validate(schemas.truckLoadReconcile), asyncHandler(async (req, res) => {
+  const { actual_remaining, returned_liters = 0, reason, note } = req.body;
   if (actual_remaining === undefined || actual_remaining === null || actual_remaining === '') {
     throw new ApiError(400, 'Actual Remaining is required');
   }
@@ -697,27 +714,40 @@ router.post('/truck-loads/:id/reconcile', requireRole(...RECONCILE_APPROVER_ROLE
     const load = loadRows[0];
     if (!load) throw new ApiError(404, 'No active loading found with that id');
 
-    const previousRemaining = Number(load.quantity_loaded) - Number(load.delivered_liters);
-    const actualRemaining = Number(actual_remaining);
-    if (actualRemaining < 0) throw new ApiError(400, 'Actual Remaining cannot be negative');
-    const difference = actualRemaining - previousRemaining;
+    let reconciliation;
+    try {
+      reconciliation = calculateTruckReconciliation({ quantityLoaded: load.quantity_loaded, deliveredLiters: load.delivered_liters,
+        actualRemaining: actual_remaining, returnedLiters: returned_liters });
+    } catch (err) { throw new ApiError(400, err.message); }
+    const { previousRemaining, actualRemaining, returnedLiters, difference, remainingOnTruck, deliveredLitersAfter } = reconciliation;
 
-    if (difference !== 0) {
+    if (difference !== 0 || returnedLiters > 0) {
       if (!reason) throw new ApiError(400, 'A reason is required when the physical stock does not match the system');
       if (!RECONCILE_REASONS.includes(reason)) throw new ApiError(400, `Reason must be one of: ${RECONCILE_REASONS.join(', ')}`);
       if (reason === 'other' && !note?.trim()) throw new ApiError(400, 'A note is required when the reason is "Other"');
     }
+    if (returnedLiters > 0 && reason !== 'returned_to_warehouse')
+      throw new ApiError(400, 'Choose "Returned to warehouse" when recording a warehouse return');
+    if (reason === 'returned_to_warehouse' && returnedLiters <= 0)
+      throw new ApiError(400, 'Enter the liters physically returned to the warehouse');
+
+    if (returnedLiters > 0) {
+      await assertFinishedWaterSource(client, { productId: load.product_id, warehouseId: load.warehouse_id });
+      await postStockMovement(client, { productId: load.product_id, warehouseId: load.warehouse_id, movementType: 'IN',
+        quantity: returnedLiters, referenceType: 'tanker_load', referenceId: load.id, performedBy: req.user.id,
+        notes: `Returned from truck #${load.truck_id}; route close reconciliation` });
+    }
 
     const { rows: reconRows } = await client.query(
-      `INSERT INTO stock_reconciliations (truck_id, truck_load_id, previous_remaining, actual_remaining, difference, reason, note, warehouse_user_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [load.truck_id, load.id, previousRemaining, actualRemaining, difference, difference !== 0 ? reason : null, note || null, req.user.id]
+      `INSERT INTO stock_reconciliations (truck_id, truck_load_id, previous_remaining, actual_remaining, returned_liters, difference, reason, note, warehouse_user_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [load.truck_id, load.id, previousRemaining, actualRemaining, returnedLiters, difference,
+        difference !== 0 || returnedLiters > 0 ? reason : null, note || null, req.user.id]
     );
 
-    const newDeliveredLiters = Number(load.quantity_loaded) - actualRemaining;
     const { rows: updatedLoadRows } = await client.query(
       `UPDATE truck_loads SET delivered_liters = $1, status = 'completed', completed_at = now() WHERE id = $2 RETURNING *`,
-      [newDeliveredLiters, load.id]
+      [deliveredLitersAfter, load.id]
     );
 
     await logAudit(client, {
@@ -772,7 +802,7 @@ router.get('/route-sessions', requireRole(...SESSION_VIEWER_ROLES), asyncHandler
             tl.quantity_loaded AS loaded_liters,
             tl.delivered_liters,
             (tl.quantity_loaded - tl.delivered_liters) AS remaining_liters,
-            sr.actual_remaining, sr.difference, sr.reason, sr.note
+            sr.actual_remaining, sr.returned_liters, sr.difference, sr.reason, sr.note
      FROM truck_loads tl
      JOIN trucks t ON t.id = tl.truck_id
      LEFT JOIN users driver ON driver.id = t.assigned_driver_id
@@ -810,12 +840,27 @@ router.post('/truck-loads/:id/complete', requireRole(...RECONCILE_APPROVER_ROLES
 // this water. This is undoing the loading team's own mistake, so it belongs to
 // the same roles that can open a Route Session, not the ones who close it.
 router.post('/truck-loads/:id/cancel', requireRole(...LOADING_ROLES), asyncHandler(async (req, res) => {
-  const { rows } = await pool.query(
-    `UPDATE truck_loads SET status = 'cancelled', completed_at = now() WHERE id = $1 AND status = 'loaded' RETURNING *`,
-    [req.params.id]
-  );
-  if (!rows[0]) throw new ApiError(404, 'No active loading found with that id');
-  res.json({ data: rows[0], error: null });
+  const result = await withTransaction(async (client) => {
+    const load = (await client.query(`SELECT * FROM truck_loads WHERE id = $1 AND status = 'loaded' FOR UPDATE`, [req.params.id])).rows[0];
+    if (!load) throw new ApiError(404, 'No active loading found with that id');
+    if (Number(load.delivered_liters) > 0) {
+      throw new ApiError(409, 'Water from this loading has already been delivered. Reconcile and close the session instead of cancelling it.');
+    }
+    // If this session drew water from the warehouse, cancelling it puts that water back (a session opened on water that was
+    // already on the truck never touched warehouse stock, so there is nothing to return).
+    const drew = (await client.query(
+      `SELECT 1 FROM stock_movements WHERE reference_type = 'tanker_load' AND reference_id = $1 AND movement_type = 'OUT' LIMIT 1`, [load.id])).rows[0];
+    if (drew) {
+      await postStockMovement(client, { productId: load.product_id, warehouseId: load.warehouse_id, movementType: 'IN',
+        quantity: Number(load.quantity_loaded), referenceType: 'tanker_load', referenceId: load.id, performedBy: req.user.id,
+        notes: `Loading cancelled for truck #${load.truck_id}` });
+    }
+    const cancelled = (await client.query(`UPDATE truck_loads SET status = 'cancelled', completed_at = now() WHERE id = $1 RETURNING *`, [load.id])).rows[0];
+    await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'truck_load', entityId: load.id,
+      oldValue: { status: 'loaded', quantity_loaded: Number(load.quantity_loaded) }, newValue: { status: 'cancelled', water_returned_to_warehouse: Boolean(drew) } });
+    return cancelled;
+  });
+  res.json({ data: result, error: null });
 }));
 
 // "Payment receiving" — the legacy debtor-collection workflow: apply a payment against
@@ -939,7 +984,7 @@ async function getQuotationWithItems(id) {
   return { ...rows[0], items };
 }
 
-router.get('/quotations', asyncHandler(async (req, res) => {
+router.get('/quotations', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const { status, customer_id } = req.query;
   const conditions = [];
   const params = [];
@@ -955,7 +1000,7 @@ router.get('/quotations', asyncHandler(async (req, res) => {
   res.json({ data: rows, error: null });
 }));
 
-router.get('/quotations/:id', asyncHandler(async (req, res) => {
+router.get('/quotations/:id', requireRole(...PERM.SALES_FIN), asyncHandler(async (req, res) => {
   const quotation = await getQuotationWithItems(req.params.id);
   if (!quotation) throw new ApiError(404, 'Quotation not found');
   res.json({ data: quotation, error: null });
@@ -1117,3 +1162,4 @@ module.exports = router;
 module.exports.createSalesOrderFromItems = createSalesOrderFromItems;
 module.exports.postCreditApprovalRevenue = postCreditApprovalRevenue;
 module.exports.generateOrderNumber = generateOrderNumber;
+module.exports.getOrderWithItems = getOrderWithItems;
