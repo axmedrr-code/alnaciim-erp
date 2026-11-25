@@ -19,7 +19,7 @@ This report describes only code and tests found in this Al-Naciim ERP repository
 | Operations Manager view | Operations dashboard and pending work/exception data | Present in source; E2E/UAT pending |
 | Audit trail | Shared audit service, audit endpoints, procurement approvals/audit records, inventory/production/logistics audit calls | Present in source; completeness review across every write path pending |
 | Reports | Existing production, sales, finance and procurement dashboards/reports | Partial; completeness and reconciliation against the general ledger are unverified |
-| Odoo / WMS / NUWACO business integrations | No implemented integration adapters, API contracts or credentials found in this repository | Pending; do not infer an integration from deployment/config references |
+| Odoo / WMS / NUWACO business integrations | No implemented integration adapters, API contracts or credentials found in this repository | Pending. A design-only proposal is in `docs/INTEGRATION_ARCHITECTURE_PROPOSAL.md` and awaits approval; nothing is implemented or connected |
 | Railway | Deployment/configuration references only | Business-data integration not implemented or verified |
 
 ## Verification run
