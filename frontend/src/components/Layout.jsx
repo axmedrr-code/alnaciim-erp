@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Package, Factory, Truck, ShoppingCart, Wrench,
   Landmark, BarChart3, Settings as SettingsIcon, Menu, LogOut, Droplets,
-  PanelLeftClose, PanelLeftOpen, Sun, Moon, Building2, ClipboardList, ShieldAlert
+  PanelLeftClose, PanelLeftOpen, Sun, Moon, Building2, ClipboardList, ShieldAlert, Wallet
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -16,6 +16,8 @@ const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: null },
   { to: '/operations', label: 'Operations Overview', icon: ClipboardList, roles: ['Admin', 'Operation Manager'] },
   { to: '/logistics', label: 'Logistics Incidents', icon: ShieldAlert, roles: ['Admin', 'Operation Manager', 'Route Supervisor', 'Supervisor', 'Sales Manager', 'Data Entry Operator', 'Driver'] },
+  { to: '/tanker-loading', label: 'Tanker Loading', icon: Truck, roles: ['Admin', 'Storekeeper', 'Data Entry Operator'] },
+  { to: '/collections', label: 'Collections', icon: Wallet, roles: ['Collector'] },
   { to: '/inventory', label: 'Inventory', icon: Package, roles: ['Admin', 'Inventory Manager', 'Storekeeper'] },
   { to: '/production', label: 'Production', icon: Factory, roles: ['Admin', 'Production Manager', 'Technician'] },
   { to: '/sales', label: 'Sales & Distribution', icon: Truck, roles: ['Admin', 'Sales Manager', 'Cashier'] },

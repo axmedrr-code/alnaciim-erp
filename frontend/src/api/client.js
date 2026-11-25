@@ -15,7 +15,9 @@ client.interceptors.request.use((config) => {
 client.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    // A 401 from the login or change-password call means "wrong credentials", not "your session ended": show the message, keep the session.
+    const credentialCheck = /\/auth\/(login|change-password)$/.test(String(err.config?.url || ''));
+    if (err.response?.status === 401 && !credentialCheck) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       if (!location.pathname.startsWith('/login')) location.href = '/login';

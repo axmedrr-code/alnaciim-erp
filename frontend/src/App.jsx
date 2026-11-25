@@ -18,6 +18,8 @@ const DriverPage = lazy(() => import('./pages/driver/DriverPage'));
 const RequisitionsPage = lazy(() => import('./pages/procurement/RequisitionsPage'));
 const OperationsDashboard = lazy(() => import('./pages/OperationsDashboard'));
 const LogisticsExceptionsPage = lazy(() => import('./pages/LogisticsExceptionsPage'));
+const TankerLoadingPage = lazy(() => import('./pages/TankerLoadingPage'));
+const CollectionsPage = lazy(() => import('./pages/CollectionsPage'));
 
 function Home() {
   const { user } = useAuth();
@@ -47,6 +49,8 @@ export default function App() {
               <Route path="requisitions" element={<RequisitionsPage />} />
               <Route path="operations" element={<OperationsDashboard />} />
               <Route path="logistics" element={<LogisticsExceptionsPage />} />
+              <Route path="tanker-loading" element={<TankerLoadingPage />} />
+              <Route path="collections" element={<CollectionsPage />} />
               <Route path="maintenance" element={<MaintenancePage />} />
               <Route path="finance" element={<FinancePage />} />
               <Route path="reports" element={<ReportsPage />} />

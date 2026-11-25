@@ -29,7 +29,7 @@ export default function TruckLoadsTab() {
   const { rows, reload } = useApi('/sales/truck-loads');
   const { rows: trucks } = useApi('/trucks');
   const { rows: products } = useApi('/products?type=finished_good');
-  const { rows: warehouses } = useApi('/warehouses');
+  const { rows: warehouses } = useApi(canLoad ? '/warehouses' : null, [canLoad]); // only the loading role needs the warehouse list
   const [showOpenModal, setShowOpenModal] = useState(false);
   const [openInfo, setOpenInfo] = useState(null);
   const [error, setError] = useState(null);

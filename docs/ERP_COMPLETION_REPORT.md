@@ -110,7 +110,7 @@ Roughly 34 real defects were found and fixed while writing the E2E suites. The m
 ## 7. Known limitations
 
 1. **UAT not performed** with real staff (Admin, department heads, Operation Manager, Procurement, Storekeeper, Finance, Data Entry, Driver, Cashier).
-2. **UI not browser-automated** — only API-level E2E, builds and manual spot checks of the deployed ERP.
+2. **UI not browser-automated** — only API-level E2E, builds and manual browser checks. The role menus added for UAT (Tanker Loading for Storekeeper/Data Entry, Collections for Collector, Change password for everyone) were checked by hand in the browser against the TEST API; route dispatch for Route Supervisors/Drivers remains in the POS app.
 3. **Maintenance spend** (`maintenance_logs.cost`, tank maintenance cost) is recorded and shown in machine profitability but **not posted to the general ledger**; Finance must decide the accounts and payment treatment.
 4. Collections/aging dashboards still count **unapproved (pending) credit invoices** as receivable although the ledger does not.
 5. Per-department management reports are not independently reconciled to source records; the cost-of-goods and inventory valuation reports have not been audited against the ledger.

@@ -740,10 +740,15 @@ const BILLING_TABS = [
   { key: 'reports', label: 'Reports', icon: History, Component: BillingReportsTab }
 ];
 
+// Employee performance is a management report (Sales / Finance / route management); collectors do not get that tab.
+const PERFORMANCE_ROLES = ['Admin', 'Finance Officer', 'Sales Manager', 'Route Supervisor', 'Supervisor'];
+
 function BillingCollectionsPage() {
+  const { user } = useAuth();
   const [department, setDepartment] = useDepartment();
-  const [activeKey, setActiveKey] = useState(BILLING_TABS[0].key);
-  const active = BILLING_TABS.find((t) => t.key === activeKey) || BILLING_TABS[0];
+  const tabs = BILLING_TABS.filter((t) => t.key !== 'employee-performance' || PERFORMANCE_ROLES.includes(user?.role));
+  const [activeKey, setActiveKey] = useState(tabs[0].key);
+  const active = tabs.find((t) => t.key === activeKey) || tabs[0];
   const Active = active.Component;
 
   return (
@@ -758,7 +763,7 @@ function BillingCollectionsPage() {
       </div>
 
       <div className="grouped-nav__subtabs" style={{ marginBottom: 18 }}>
-        {BILLING_TABS.map((t) => {
+        {tabs.map((t) => {
           const Icon = t.icon;
           return (
             <button
