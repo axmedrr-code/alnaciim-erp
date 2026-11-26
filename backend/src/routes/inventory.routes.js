@@ -10,11 +10,24 @@ const { PERM } = require('../middleware/permissions');
 
 const router = Router();
 
+// Storekeepers only see their own assigned warehouse. A Storekeeper without one sees nothing; asking for another warehouse is 403.
+function storekeeperScope(req) {
+  if (req.user.role !== 'Storekeeper') return null;
+  const wh = req.user.assignedWarehouseId;
+  if (!wh) return { none: true };
+  const asked = req.query.warehouse_id;
+  if (asked && Number(asked) !== wh) throw new ApiError(403, 'Storekeepers may only view stock in their assigned warehouse');
+  return { warehouseId: wh };
+}
+
 router.get('/stock-levels', requireRole(...PERM.INVENTORY_VIEW), asyncHandler(async (req, res) => {
   const { warehouse_id, product_id } = req.query;
+  const scope = storekeeperScope(req);
+  if (scope && scope.none) return res.json({ data: [], error: null });
   const conditions = [];
   const params = [];
-  if (warehouse_id) { params.push(warehouse_id); conditions.push(`sl.warehouse_id = $${params.length}`); }
+  if (scope) { params.push(scope.warehouseId); conditions.push(`sl.warehouse_id = $${params.length}`); }
+  else if (warehouse_id) { params.push(warehouse_id); conditions.push(`sl.warehouse_id = $${params.length}`); }
   if (product_id) { params.push(product_id); conditions.push(`sl.product_id = $${params.length}`); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -35,6 +48,8 @@ router.get('/stock-levels', requireRole(...PERM.INVENTORY_VIEW), asyncHandler(as
 // a tracked stock relationship for that product. A plain CROSS JOIN would flag e.g. raw materials
 // as "low" in every warehouse that has never carried them (including ones of unrelated types).
 router.get('/low-stock', requireRole(...PERM.INVENTORY_VIEW), asyncHandler(async (req, res) => {
+  const scope = storekeeperScope(req);
+  if (scope && scope.none) return res.json({ data: [], error: null });
   const { rows } = await pool.query(
     `SELECT p.id AS product_id, p.sku, p.name, p.reorder_level, p.reorder_qty, w.id AS warehouse_id, w.name AS warehouse_name,
             COALESCE(sl.quantity, 0) AS quantity
@@ -49,17 +64,22 @@ router.get('/low-stock', requireRole(...PERM.INVENTORY_VIEW), asyncHandler(async
      )
      LEFT JOIN stock_levels sl ON sl.product_id = p.id AND sl.warehouse_id = w.id
      WHERE p.is_active = true AND COALESCE(sl.quantity, 0) <= p.reorder_level AND p.reorder_level > 0
-     ORDER BY (COALESCE(sl.quantity, 0) - p.reorder_level) ASC`
+       AND ($1::int IS NULL OR w.id = $1::int)
+     ORDER BY (COALESCE(sl.quantity, 0) - p.reorder_level) ASC`,
+    [scope ? scope.warehouseId : null]
   );
   res.json({ data: rows, error: null });
 }));
 
 router.get('/movements', requireRole(...PERM.INVENTORY_VIEW), asyncHandler(async (req, res) => {
   const { product_id, warehouse_id, from, to, movement_type } = req.query;
+  const scope = storekeeperScope(req);
+  if (scope && scope.none) return res.json({ data: [], error: null });
   const conditions = [];
   const params = [];
   if (product_id) { params.push(product_id); conditions.push(`sm.product_id = $${params.length}`); }
-  if (warehouse_id) { params.push(warehouse_id); conditions.push(`sm.warehouse_id = $${params.length}`); }
+  if (scope) { params.push(scope.warehouseId); conditions.push(`sm.warehouse_id = $${params.length}`); }
+  else if (warehouse_id) { params.push(warehouse_id); conditions.push(`sm.warehouse_id = $${params.length}`); }
   if (movement_type) { params.push(movement_type); conditions.push(`sm.movement_type = $${params.length}`); }
   if (from) { params.push(from); conditions.push(`sm.created_at >= $${params.length}`); }
   if (to) { params.push(to); conditions.push(`sm.created_at <= $${params.length}`); }

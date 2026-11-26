@@ -1668,3 +1668,7 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_audit_logs_immutable ON audit_logs;
 CREATE TRIGGER trg_audit_logs_immutable BEFORE UPDATE OR DELETE ON audit_logs
   FOR EACH ROW EXECUTE FUNCTION audit_logs_block_mutation();
+
+-- 039_requisition_emergency_priority
+ALTER TABLE purchase_requisitions DROP CONSTRAINT IF EXISTS purchase_requisitions_priority_check;
+ALTER TABLE purchase_requisitions ADD CONSTRAINT purchase_requisitions_priority_check CHECK (priority IN ('low','normal','high','urgent','emergency'));
