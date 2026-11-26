@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../config/db');
 const { asyncHandler, ApiError } = require('../utils/asyncHandler');
-const { authenticate, requireRole } = require('../middleware/auth');
+const { authenticate, requireRole, invalidateUser } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { loginAccountLimiter, loginIpLimiter } = require('../middleware/rateLimit');
@@ -50,9 +50,14 @@ router.post('/change-password', authenticate, validate(schemas.passwordChange), 
   const valid = await bcrypt.compare(current_password, rows[0] ? rows[0].password_hash : DUMMY_HASH);
   if (!rows[0] || !valid) throw new ApiError(401, 'The current password is incorrect');
   const hash = await bcrypt.hash(new_password, 10);
-  await pool.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2', [hash, req.user.id]);
+  await pool.query('UPDATE users SET password_hash = $1, password_changed_at = now(), updated_at = now() WHERE id = $2', [hash, req.user.id]);
   await pool.query(`INSERT INTO audit_logs (user_id, action, entity_type, entity_id, new_value) VALUES ($1,'UPDATE','user_password',$1,$2)`, [req.user.id, JSON.stringify({ event: 'password_changed_by_user' })]);
-  res.json({ data: { password_changed: true }, error: null });
+  invalidateUser(req.user.id);
+  // Every other session of this user is now invalid; hand this one a fresh token so the user is not signed out.
+  const fresh = (await pool.query('SELECT u.id, u.email, u.full_name, u.assigned_warehouse_id, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1', [req.user.id])).rows[0];
+  const payload = { id: fresh.id, email: fresh.email, fullName: fresh.full_name, role: fresh.role_name, assignedWarehouseId: fresh.assigned_warehouse_id };
+  const token = jwt.sign(payload, process.env.JWT_SECRET, { algorithm: 'HS256', expiresIn: process.env.JWT_EXPIRES_IN || '8h' });
+  res.json({ data: { password_changed: true, token, user: payload }, error: null });
 }));
 
 router.get('/me', authenticate, asyncHandler(async (req, res) => {

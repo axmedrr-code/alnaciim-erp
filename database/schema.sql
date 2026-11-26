@@ -1672,3 +1672,6 @@ CREATE TRIGGER trg_audit_logs_immutable BEFORE UPDATE OR DELETE ON audit_logs
 -- 039_requisition_emergency_priority
 ALTER TABLE purchase_requisitions DROP CONSTRAINT IF EXISTS purchase_requisitions_priority_check;
 ALTER TABLE purchase_requisitions ADD CONSTRAINT purchase_requisitions_priority_check CHECK (priority IN ('low','normal','high','urgent','emergency'));
+
+-- 040_users_password_changed_at
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;

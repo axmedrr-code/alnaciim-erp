@@ -92,8 +92,13 @@ const { start } = require('./harness');
   r = await asUser(t3, 'POST', '/auth/change-password', { current_password: 'wrong-current-password', new_password: pw() }); rep('Changing the password with a wrong current password -> 401', r.s === 401);
   r = await asUser(t3, 'POST', '/auth/change-password', { current_password: nu.password, new_password: 'short' }); rep('A new password under 8 characters -> 400', r.s === 400);
   r = await asUser(t3, 'POST', '/auth/change-password', { current_password: nu.password, new_password: nu.password }); rep('Reusing the same password -> 400', r.s === 400);
+  await new Promise((res) => setTimeout(res, 1100)); // the session must be older than the change (JWT iat has 1 s resolution)
   const np = pw(); r = await asUser(t3, 'POST', '/auth/change-password', { current_password: nu.password, new_password: np });
   rep('A user changes their own password; the response holds no password', r.s === 200 && r.d.password_changed === true && !JSON.stringify(r.b).includes(np));
+  const freshTok = r.d && r.d.token;
+  rep('The change returns a fresh token so the current session stays signed in', !!freshTok && (await asUser(freshTok, 'GET', '/auth/me')).s === 200);
+  rep('The token issued before the password change is rejected (401)', (await asUser(t3, 'GET', '/auth/me')).s === 401);
+  rep('...and so is every protected route with it', (await asUser(t3, 'GET', '/products')).s === 401);
   r = await login(nu.email, nu.password); rep('The old password no longer works', r.s === 401);
   r = await login(nu.email, np); rep('The new password works', r.s === 200);
   r = await raw('POST', '/auth/change-password', { current_password: np, new_password: pw() }); rep('Changing a password needs a signed-in session (401)', r.s === 401);
@@ -102,6 +107,17 @@ const { start } = require('./harness');
   r = await api('adm2', 'PUT', `/users/${N1.id}/password`, { password: 'tiny' }); rep('An Admin reset below the minimum length -> 400', r.s === 400);
   r = await api('adm2', 'PUT', '/users/99999999/password', { password: reset }); rep('Resetting an unknown user -> 404', r.s === 404);
   r = await api('adm2', 'PUT', `/users/${N1.id}/password`, { password: reset }); rep('Admin resets a forgotten password; nothing sensitive is returned', r.s === 200 && r.d.password_reset === true && !JSON.stringify(r.b).includes(reset));
+
+  // ---------- an Admin reset ends the user's open sessions
+  const nu4 = body(4); await api('adm2', 'POST', '/users', nu4);
+  const t4 = (await login(nu4.email, nu4.password)).d.token;
+  rep('Before the reset the user session works', (await asUser(t4, 'GET', '/auth/me')).s === 200);
+  await new Promise((res) => setTimeout(res, 1100));
+  const reset4 = pw(); r = await api('adm2', 'PUT', `/users/${(await q('select id from users where email=$1', [nu4.email]))[0].id}/password`, { password: reset4 });
+  rep('Admin reset succeeds', r.s === 200);
+  rep('The user session opened before the Admin reset is rejected (401)', (await asUser(t4, 'GET', '/auth/me')).s === 401);
+  r = await login(nu4.email, reset4); rep('Signing in with the reset password works and gives a working token', r.s === 200 && (await asUser(r.d.token, 'GET', '/auth/me')).s === 200);
+  rep('Other users sessions are not affected by someone else password change', (await api('cash', 'GET', '/auth/me')).s === 200);
   r = await login(b1.email, p1); rep('The forgotten password stops working after the reset', r.s === 401);
   r = await login(b1.email, reset); rep('The reset password works', r.s === 200);
   const audPw = await q(`select new_value::text t from audit_logs where entity_type='user_password' and entity_id = any($1)`, [[N1.id, (await q('select id from users where email=$1', [nu.email]))[0].id]]);

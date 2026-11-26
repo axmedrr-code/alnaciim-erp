@@ -22,7 +22,7 @@ async function lookupUser(id) {
   const hit = cache.get(id);
   if (TTL_MS > 0 && hit && now - hit.at < TTL_MS) return hit.row;
   const { rows } = await pool.query(
-    'SELECT u.id, u.is_active, u.assigned_warehouse_id, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1',
+    'SELECT u.id, u.is_active, u.assigned_warehouse_id, u.password_changed_at, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1',
     [id]
   );
   const row = rows[0] || null;
@@ -49,6 +49,9 @@ async function authenticate(req, res, next) {
   try {
     const user = await lookupUser(Number(payload.id));
     if (!user || !user.is_active) return next(new ApiError(401, 'Account is disabled or no longer exists'));
+    // A password change/reset ends every session started before it (iat is in whole seconds, so compare at that granularity).
+    if (user.password_changed_at && Number(payload.iat || 0) < Math.floor(new Date(user.password_changed_at).getTime() / 1000))
+      return next(new ApiError(401, 'Your password was changed. Please sign in again.'));
     req.user = { ...payload, role: user.role_name, assignedWarehouseId: user.assigned_warehouse_id ? Number(user.assigned_warehouse_id) : null };
     next();
   } catch (err) {

@@ -68,7 +68,7 @@ function ask(question) {
   }
 
   const hash = await bcrypt.hash(password, 10); // same cost the app uses elsewhere (keeps login timing uniform)
-  const { rowCount } = await pool.query('UPDATE users SET password_hash = $1 WHERE lower(email) = $2', [hash, email]);
+  const { rowCount } = await pool.query('UPDATE users SET password_hash = $1, password_changed_at = now() WHERE lower(email) = $2', [hash, email]);
   if (!rowCount) throw new Error(`No user with email ${email} — nothing changed`);
   console.log(`Password updated for ${email}. Existing sessions stay valid until their token expires.`);
 })()
