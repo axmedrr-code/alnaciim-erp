@@ -64,6 +64,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
 router.post('/', requireRole(...STORE), validate(schemas.issueCreate), asyncHandler(async (req, res) => {
   const { requisition_id, warehouse_id, lines, notes } = req.body;
+  if (req.user.role === 'Storekeeper' && (!req.user.assignedWarehouseId || Number(warehouse_id) !== req.user.assignedWarehouseId))
+    throw new ApiError(403, 'Storekeepers may only issue materials from their assigned warehouse');
   const out = await withTransaction(async (client) => {
     const pr = (await client.query('SELECT * FROM purchase_requisitions WHERE id = $1 FOR UPDATE', [requisition_id])).rows[0];
     if (!pr) throw new ApiError(404, 'Requisition not found');

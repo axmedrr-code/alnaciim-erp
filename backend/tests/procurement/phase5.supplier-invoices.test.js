@@ -75,6 +75,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let warehouse = (await q('SELECT id FROM warehouses WHERE type=$1 ORDER BY id LIMIT 1', [warehouseType]))[0];
   if (!warehouse) warehouse = (await q('INSERT INTO warehouses (code,name,type) VALUES ($1,$2,$3) RETURNING id',
     ['P5-WH-' + Date.now(), 'Phase 5 Test Warehouse', warehouseType]))[0];
+  await pool.query('UPDATE users SET assigned_warehouse_id=$1 WHERE id=$2', [warehouse.id, userMap.store.id]); // storekeepers are scoped to their warehouse
   const qty = 5, unitPrice = Number(product.unit_cost || 10), amount = Math.round(qty * unitPrice * 100) / 100;
   const poResult = await api('proc', 'POST', '/procurement/purchase-orders', {
     supplier_id: supplier.id, expected_date: null, notes: 'Phase 5 isolated test',
