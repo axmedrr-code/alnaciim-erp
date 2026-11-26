@@ -1,0 +1,16 @@
+{
+  "name": "alnaciim-erp-browser-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-browser end-to-end tests (Playwright) for the ERP frontend against a real backend and an isolated test database",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "bcryptjs": "^2.4.3",
+    "pg": "^8.13.0"
+  }
+}
