@@ -8,25 +8,25 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import QuickSearch from './QuickSearch';
-import { REPORT_ROLES } from '../utils/permissions';
+import { ROUTE_ROLES } from '../utils/routeAccess';
 import NotificationsBell from './NotificationsBell';
 import UserMenu from './UserMenu';
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: null },
-  { to: '/operations', label: 'Operations Overview', icon: ClipboardList, roles: ['Admin', 'Operation Manager'] },
-  { to: '/logistics', label: 'Logistics Incidents', icon: ShieldAlert, roles: ['Admin', 'Operation Manager', 'Route Supervisor', 'Supervisor', 'Sales Manager', 'Data Entry Operator', 'Driver'] },
-  { to: '/tanker-loading', label: 'Tanker Loading', icon: Truck, roles: ['Admin', 'Storekeeper', 'Data Entry Operator'] },
-  { to: '/collections', label: 'Collections', icon: Wallet, roles: ['Collector'] },
-  { to: '/inventory', label: 'Inventory', icon: Package, roles: ['Admin', 'Inventory Manager', 'Storekeeper'] },
-  { to: '/production', label: 'Production', icon: Factory, roles: ['Admin', 'Production Manager', 'Technician'] },
-  { to: '/sales', label: 'Sales & Distribution', icon: Truck, roles: ['Admin', 'Sales Manager', 'Cashier'] },
-  { to: '/requisitions', label: 'Requisitions', icon: ClipboardList, roles: null },
-  { to: '/procurement', label: 'Procurement', icon: ShoppingCart, roles: ['Admin', 'Procurement Officer', 'Storekeeper', 'Inventory Manager', 'Operation Manager', 'Finance Officer'] },
-  { to: '/maintenance', label: 'Maintenance', icon: Wrench, roles: ['Admin', 'Production Manager', 'Technician'] },
-  { to: '/finance', label: 'Finance', icon: Landmark, roles: ['Admin', 'Finance Officer'] },
-  { to: '/reports', label: 'Reports', icon: BarChart3, roles: REPORT_ROLES },
-  { to: '/settings', label: 'Settings', icon: SettingsIcon, roles: ['Admin'] }
+  { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ROUTE_ROLES['/'] },
+  { to: '/operations', label: 'Operations Overview', icon: ClipboardList, roles: ROUTE_ROLES['/operations'] },
+  { to: '/logistics', label: 'Logistics Incidents', icon: ShieldAlert, roles: ROUTE_ROLES['/logistics'] },
+  { to: '/tanker-loading', label: 'Tanker Loading', icon: Truck, roles: ROUTE_ROLES['/tanker-loading'] },
+  { to: '/collections', label: 'Collections', icon: Wallet, roles: ROUTE_ROLES['/collections'] },
+  { to: '/inventory', label: 'Inventory', icon: Package, roles: ROUTE_ROLES['/inventory'] },
+  { to: '/production', label: 'Production', icon: Factory, roles: ROUTE_ROLES['/production'] },
+  { to: '/sales', label: 'Sales & Distribution', icon: Truck, roles: ROUTE_ROLES['/sales'] },
+  { to: '/requisitions', label: 'Requisitions', icon: ClipboardList, roles: ROUTE_ROLES['/requisitions'] },
+  { to: '/procurement', label: 'Procurement', icon: ShoppingCart, roles: ROUTE_ROLES['/procurement'] },
+  { to: '/maintenance', label: 'Maintenance', icon: Wrench, roles: ROUTE_ROLES['/maintenance'] },
+  { to: '/finance', label: 'Finance', icon: Landmark, roles: ROUTE_ROLES['/finance'] },
+  { to: '/reports', label: 'Reports', icon: BarChart3, roles: ROUTE_ROLES['/reports'] },
+  { to: '/settings', label: 'Settings', icon: SettingsIcon, roles: ROUTE_ROLES['/settings'] }
 ];
 
 // Drivers get a minimal, mobile-first shell — just their delivery list and logout,

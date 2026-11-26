@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
-  const { login } = useAuth();
+  const { user, login } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -23,6 +23,8 @@ export default function Login() {
       setBusy(false);
     }
   }
+
+  if (user) return <Navigate to="/" replace />; // already signed in: the login form has nothing to do
 
   return (
     <div className="login-page">
