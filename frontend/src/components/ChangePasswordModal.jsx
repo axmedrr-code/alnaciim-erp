@@ -18,7 +18,9 @@ export default function ChangePasswordModal({ onClose }) {
     if (next !== confirm) { setError('The new password and its confirmation do not match.'); return; }
     setBusy(true);
     try {
-      await client.post('/auth/change-password', { current_password: current, new_password: next });
+      const res = await client.post('/auth/change-password', { current_password: current, new_password: next });
+      // All other sessions of this account were just ended by the server; keep this one alive with the fresh token it returns.
+      if (res.data?.data?.token) localStorage.setItem('token', res.data.data.token);
       setDone(true); setCurrent(''); setNext(''); setConfirm('');
     } catch (err) {
       setError(err.response?.data?.error || 'Could not change the password.');
@@ -35,7 +37,7 @@ export default function ChangePasswordModal({ onClose }) {
         </div>
         {done ? (
           <div>
-            <p>Your password was changed. Use the new one the next time you sign in.</p>
+            <p>Your password was changed. Your other sessions (other devices or browsers) were signed out; use the new password the next time you sign in.</p>
             <button className="btn" onClick={onClose}>Close</button>
           </div>
         ) : (

@@ -83,7 +83,7 @@ router.put('/:id', requireRole('Admin'), validate(schemas.userUpdate), asyncHand
 router.put('/:id/password', requireRole('Admin'), validate(schemas.userPasswordReset), asyncHandler(async (req, res) => {
   const hash = await bcrypt.hash(req.body.password, 10);
   await withTransaction(async (client) => {
-    const { rows } = await client.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2 RETURNING id, email', [hash, req.params.id]);
+    const { rows } = await client.query('UPDATE users SET password_hash = $1, password_changed_at = now(), updated_at = now() WHERE id = $2 RETURNING id, email', [hash, req.params.id]);
     if (!rows[0]) throw new ApiError(404, 'User not found');
     await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'user_password', entityId: rows[0].id, newValue: { event: 'password_reset_by_admin' } });
   });
