@@ -2,6 +2,8 @@
 
 **Date:** 2026-11-26 · **Code reviewed:** `main` @ `48c0835` (PR #28 merged) · **Environment:** TEST only (Neon TEST, Render `alnaciim-erp-test-api`, Vercel `alnaciim-erp-test`, POS `alnaciim-pos-test`) · **Production, Railway, Odoo, WMS, NUWACO and GEEDSAN were not touched.**
 
+> **Update (same day, after the review):** security items S1 (`react-router`) and S2 (token invalidation) are **closed** (PR #30, #31, deployed to TEST), and the UI route-guard / not-found / login-redirect gaps found in the browser check are fixed (UI guard PR). Sections 6 and 7 below are updated accordingly.
+
 > **Soo koobid (Somali):** Dib-u-eegista tayada buuxda waa dhammaatay. **1,312 tijaabo E2E + 53 unit: dhammaantood PASS, 0 fashil** (suite kasta mid-mid ayaa loo socodsiiyay Neon TEST). Dib-u-eegistu waxay heshay oo sixday saddex cilad oo badeeco ah (audit-ka dhexe, GRN/issue ee Storekeeper aan xaddidnayn, kala-saarida RM/FG) iyo laba cilad oo tijaabo ah. **TEST waa diyaar UAT-ga dadka dhabta ah. Production MA DIYAAR AH.**
 
 ## 1. Verdict
@@ -28,6 +30,9 @@ Delivered since the completion report:
 | #25 | **Procurement events now also written to the central audit log** (root cause of the failing B15) |
 | #26 | **Raw-material / finished-goods / spare-part warehouse separation** enforced for every stock inflow |
 | #27 | route-operations test isolation (test only) |
+| #30 | **Password change or reset ends every earlier session** (`users.password_changed_at`, migration 040; `change-password` returns a fresh token) |
+| #31 | **react-router-dom 6.26 → 7.18.7** in the ERP frontend and the POS (`npm audit` 0 vulnerabilities) |
+| UI guard PR | **Role guard on every ERP route** (one shared table `utils/routeAccess.js` drives both the menu and the guard), a **Page not found** page, signed-in users are redirected away from `/login`; POS unknown URLs redirect |
 | #28 | **RM storekeeper sees only own warehouse** (API + UI) and new **EMERGENCY** request priority (needs justification ≥ 20 chars and a required-by date; does **not** bypass approvals; sorted first for the Operation Manager) |
 
 21 UAT accounts (`uat.<key>@alnaciim.test`) with data are ready on TEST; passwords were issued one by one through the clipboard only.
@@ -93,7 +98,7 @@ Delivered since the completion report:
 
 | # | Item | Impact |
 |---|---|---|
-| 1 | **Frontend and POS have no automated tests** | UI defects are found only by hand (the Cashier case) |
+| 1 | **Frontend and POS have no automated tests** (route guards were verified by hand for 5 roles: Finance, Storekeeper, Collector, Data Entry, Admin) | UI defects are found only by hand (the Cashier case) |
 | 2 | **Legacy stock in the wrong kind of warehouse remains** (e.g. 2 finished-good rows in a raw-material warehouse, ~20 raw-material rows in general warehouses on TEST) | Needs a business decision; can now be moved out with a transfer/adjustment |
 | 3 | Maintenance cost is not posted to the ledger | Cost reports incomplete |
 | 4 | Collections dashboards count `pending` invoices | Overstated receivables on dashboards |
@@ -106,10 +111,11 @@ Delivered since the completion report:
 
 | # | Issue | Severity | Status |
 |---|---|---|---|
-| S1 | `react-router` (frontend and POS): open redirect via backslash and SSR-hydration constructor injection (GHSA-wrjc-x8rr-h8h6, GHSA-337j-9hxr-rhxg); fix needs a major version bump | Moderate | **Open** |
-| S2 | Tokens are not invalidated when a password is changed or reset | Medium | **Open** |
+| S1 | `react-router` (frontend and POS): open redirect via backslash and SSR-hydration constructor injection (GHSA-wrjc-x8rr-h8h6, GHSA-337j-9hxr-rhxg) | Moderate | **Fixed** (#31, 7.18.7; `npm audit` 0 for both apps) |
+| S2 | Tokens were not invalidated when a password is changed or reset | Medium | **Fixed** (#30; users E2E 77/77, 3 of the new checks fail without the fix) |
 | S3 | Backups: Render Free has no `pg_dump` and ephemeral disk; no hosted/offsite backup | High for production | **Open** |
 | S4 | No formal penetration test or external security assessment | — | **Open** |
+| S9 | ERP had no role guard on routes (a role without access could open the page shell; the API already returned 403) and unknown URLs showed a blank page | Low | **Fixed** (UI guard PR) |
 | S5 | Backend `npm audit`: 0 vulnerabilities | — | OK |
 | S6 | Storekeeper cross-warehouse GRN/issue/read | Medium | **Fixed** |
 | S7 | Audit trail incomplete for procurement | Medium | **Fixed**; audit tables are append-only |
@@ -125,7 +131,7 @@ No password or secret was printed, committed or stored; UAT passwords were put o
 1. Browser UAT sign-off by staff has not happened.
 2. Frontend/POS have no automated tests.
 3. Hosted, tested backups and a restore drill (S3).
-4. Security assessment and open items S1, S2, S4.
+4. Security assessment (S4) and the remaining items in section 6 (S1 and S2 are closed).
 5. The old Railway data is not recovered or reconciled (Phase 0 questionnaire is awaiting the owner).
 6. Business decisions on legacy wrong-warehouse stock and on the open gaps in section 6.
 7. Integrations (Odoo, WMS, NUWACO, GEEDSAN) are design-only and need owner answers and explicit approval; they must stay separate systems.
@@ -133,7 +139,7 @@ No password or secret was printed, committed or stored; UAT passwords were put o
 ## 9. Recommended next steps
 
 1. Staff UAT on TEST (this week), then a daily defect triage.
-2. Fix S2 (token invalidation) and S1 (`react-router` upgrade with a smoke test) on separate branches.
+2. ~~Fix S2 and S1~~ **Done** (#30, #31).
 3. Add a small automated UI smoke suite for frontend/POS (login, role menus, the Cashier/Storekeeper/Collector flows).
 4. Decide the policy for legacy wrong-warehouse stock; then clean it by transfer/adjustment (not deletion).
 5. Plan hosted backups and a restore rehearsal before any production talk.
