@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-26 · **Code reviewed:** `main` @ `48c0835` (PR #28 merged) · **Environment:** TEST only (Neon TEST, Render `alnaciim-erp-test-api`, Vercel `alnaciim-erp-test`, POS `alnaciim-pos-test`) · **Production, Railway, Odoo, WMS, NUWACO and GEEDSAN were not touched.**
 
-> **Update (same day, after the review):** security items S1 (`react-router`) and S2 (token invalidation) are **closed** (PR #30, #31, deployed to TEST), and the UI route-guard / not-found / login-redirect gaps found in the browser check are fixed (UI guard PR). Sections 6 and 7 below are updated accordingly.
+> **Update (same day, after the review):** security items S1 (`react-router`) and S2 (token invalidation) are **closed** (PR #30, #31, deployed to TEST), and the UI route-guard / not-found / login-redirect gaps found in the browser check are fixed (UI guard PR #32). **Automatic UI tests now exist** for the ERP frontend (156) and the POS (6) (PR #34). Sections 1-9 below are updated accordingly; the 1,312 E2E + 53 unit figures are the backend results of the review itself.
 
 > **Soo koobid (Somali):** Dib-u-eegista tayada buuxda waa dhammaatay. **1,312 tijaabo E2E + 53 unit: dhammaantood PASS, 0 fashil** (suite kasta mid-mid ayaa loo socodsiiyay Neon TEST). Dib-u-eegistu waxay heshay oo sixday saddex cilad oo badeeco ah (audit-ka dhexe, GRN/issue ee Storekeeper aan xaddidnayn, kala-saarida RM/FG) iyo laba cilad oo tijaabo ah. **TEST waa diyaar UAT-ga dadka dhabta ah. Production MA DIYAAR AH.**
 
@@ -14,7 +14,7 @@
 | Production ready | **No** (blockers in section 7) |
 | Automated tests | **1,312 E2E + 53 unit PASS, 0 FAIL** |
 | Browser UAT by real staff | **Not started** (cannot be done by the assistant) |
-| Frontend / POS automated tests | **None exist** (build only) |
+| Frontend / POS automated tests | **162 PASS** (ERP 156 + POS 6, jsdom with a mocked API; added after the review in PR #34) |
 
 ## 2. Completed features (as of this review)
 
@@ -47,7 +47,7 @@ Delivered since the completion report:
 | 4 | Storekeeper permissions and inventory controls | **PASS** after two fixes (5.2 and #28). Writes, counts, transfers, GRN, issue and reads are all limited to the assigned warehouse. |
 | 5 | Production consumption, output, wastage, approval | **PASS** (64 + workflow). BOM consumption = BOM × (actual + wastage); finished goods only after independent approval; reject/reverse returns materials; failed QC adds nothing; over-consumption refused. |
 | 6 | Audit logs and user permissions | **PASS** after fix #25. 21 accounts × 149 GET routes: 0 server errors, 0 unexpected 401; allowed routes 200, others 403. Audit tables are append-only (trigger-enforced). |
-| 7 | Run backend, frontend, POS tests | Backend: below. **Frontend/POS: no test suites exist; `vite build` passes for both.** |
+| 7 | Run backend, frontend, POS tests | Backend: below. **Frontend/POS: no test suites existed during the review (build only); they were added right after: ERP 156/156 and POS 6/6, mutation-checked (section 4b).** |
 | 8 | End-to-end UAT | **Partial.** API-level UAT (workflow suite, 153 checks) done. **Browser UAT by staff per `docs/UAT_PLAN.md` has not started.** |
 
 ## 4. Test results (final code, each suite run alone against Neon TEST)
@@ -67,6 +67,17 @@ Delivered since the completion report:
 | Backups (local throwaway DB) | 42/42 + 17/17 | | |
 
 **Total: 1,312 E2E + 53 unit PASS, 0 FAIL.** (An earlier message said 1,314; the correct sum is 1,312.)
+
+### 4b. Frontend and POS tests (added after the review, PR #34)
+
+Vitest 2 + Testing Library + jsdom, run with `npm test` in `frontend/` and `pos/`. jsdom with a mocked API: they do **not** replace browser end-to-end tests and do not check page contents (pages are stubbed in the routing tests).
+
+| App | Result | Covers |
+|---|---|---|
+| ERP frontend | **156/156** | role-access table for 16 roles × 14 pages written out independently of the code; the whole `App` for 8 roles × 14 pages (page / access message / not found), signed-out and `/login` redirects, sidebar equals the allowed pages; Cashier has no Reports tab; Storekeeper sees only the own warehouse in Stock Levels; change-password stores the fresh token; API client 401/403 session handling |
+| POS | **6/6** | signed-out redirects, signed-in home/import/unknown URL, `/login` redirect, logout |
+
+Mutation-checked: each protected behavior (Cashier Reports, route guard, Storekeeper scope, fresh token, 401 exception, POS catch-all and login redirect) was broken on purpose and its tests failed; the code was then restored. Both `vite build` pass; `npm audit --omit=dev` is 0 for both.
 
 ### Failures met during the review and how each was resolved (none bypassed)
 
@@ -98,7 +109,7 @@ Delivered since the completion report:
 
 | # | Item | Impact |
 |---|---|---|
-| 1 | **Frontend and POS have no automated tests** (route guards were verified by hand for 5 roles: Finance, Storekeeper, Collector, Data Entry, Admin) | UI defects are found only by hand (the Cashier case) |
+| 1 | **Frontend/POS tests are jsdom with a mocked API** (162 tests, PR #34), not browser end-to-end; page contents and business flows through the UI are still checked by hand (route guards were also verified in a real browser for 5 roles) | A visual or integration UI defect can still slip through (the Cashier case was of this kind before the tests existed) |
 | 2 | **Legacy stock in the wrong kind of warehouse remains** (e.g. 2 finished-good rows in a raw-material warehouse, ~20 raw-material rows in general warehouses on TEST) | Needs a business decision; can now be moved out with a transfer/adjustment |
 | 3 | Maintenance cost is not posted to the ledger | Cost reports incomplete |
 | 4 | Collections dashboards count `pending` invoices | Overstated receivables on dashboards |
@@ -125,11 +136,11 @@ No password or secret was printed, committed or stored; UAT passwords were put o
 
 ## 8. Deployment readiness
 
-**TEST (staff UAT): ready.** Live now: Render `48c0835`, Vercel ERP (current main), POS unchanged. Run `docs/UAT_PLAN.md` with the 21 accounts; log defects in the plan's defect table; fix S1/S2-severity items on separate branches.
+**TEST (staff UAT): ready.** Live now: Render `dcd2ee5` (backend unchanged since PR #30), Vercel ERP and POS from `377d34a` (PR #32/#33); PR #34 adds tests only, so nothing was redeployed for it. Run `docs/UAT_PLAN.md` with the 21 accounts; log defects in the plan's defect table; fix S1/S2-severity items on separate branches.
 
 **Production: NOT ready.** Blockers:
 1. Browser UAT sign-off by staff has not happened.
-2. Frontend/POS have no automated tests.
+2. Browser end-to-end tests of the UI (the existing 162 frontend/POS tests use a mocked API).
 3. Hosted, tested backups and a restore drill (S3).
 4. Security assessment (S4) and the remaining items in section 6 (S1 and S2 are closed).
 5. The old Railway data is not recovered or reconciled (Phase 0 questionnaire is awaiting the owner).
@@ -140,6 +151,6 @@ No password or secret was printed, committed or stored; UAT passwords were put o
 
 1. Staff UAT on TEST (this week), then a daily defect triage.
 2. ~~Fix S2 and S1~~ **Done** (#30, #31).
-3. Add a small automated UI smoke suite for frontend/POS (login, role menus, the Cashier/Storekeeper/Collector flows).
+3. ~~Add a small automated UI suite~~ **Done** (PR #34, 162 tests); next: a real-browser end-to-end suite (e.g. Playwright against TEST) for the Cashier/Storekeeper/Collector flows.
 4. Decide the policy for legacy wrong-warehouse stock; then clean it by transfer/adjustment (not deletion).
 5. Plan hosted backups and a restore rehearsal before any production talk.
