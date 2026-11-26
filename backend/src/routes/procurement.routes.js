@@ -138,6 +138,8 @@ router.delete('/purchase-orders/:id', requireRole('Admin', 'Procurement Officer'
 // posts stock IN, and rolls the PO status to partially_received or received.
 router.post('/purchase-orders/:id/receive', requireRole('Admin', 'Procurement Officer', 'Storekeeper'), validate(schemas.purchaseOrderReceive), asyncHandler(async (req, res) => {
   const { items, warehouse_id, notes, delivery_note_no } = req.body; // items: [{ purchase_item_id, quantity_received, condition }]
+  if (req.user.role === 'Storekeeper' && (!req.user.assignedWarehouseId || Number(warehouse_id) !== req.user.assignedWarehouseId))
+    throw new ApiError(403, 'Storekeepers may only receive goods into their assigned warehouse');
 
   const result = await withTransaction(async (client) => {
     const { rows: poRows } = await client.query('SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.id]);

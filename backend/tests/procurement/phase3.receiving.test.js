@@ -73,6 +73,7 @@ const ACCOUNTS = [
   const S = await sup(1);
   const prod = (await q(`select id from products where is_active and product_type in ('raw_material','spare_part') order by id limit 2`)).map((p) => p.id);
   const wh = (await q('select id from warehouses order by id limit 1'))[0].id;
+  await pool.query('update users set assigned_warehouse_id=$1 where id=$2', [wh, U.store.id]); // storekeepers are scoped to their warehouse
   const legacy = async (who, method, p, body) => { const x = await fetch(`http://localhost:${PORT}/api/v1/procurement${p}`, { method, headers: { Authorization: 'Bearer ' + tok[who], 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); let j = {}; try { j = await x.json(); } catch (_) {} return { s: x.status, b: j }; };
   const stock = async (pid) => Number((await q('select coalesce(sum(quantity),0) n from stock_levels where product_id=$1 and warehouse_id=$2', [pid, wh]))[0].n);
   const gl = async () => { const g = (await q('select coalesce(sum(debit),0)::numeric(14,2) d, coalesce(sum(credit),0)::numeric(14,2) c from journal_lines'))[0]; return Number(g.d) === Number(g.c); };
