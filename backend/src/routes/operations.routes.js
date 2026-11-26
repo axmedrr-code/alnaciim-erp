@@ -29,7 +29,7 @@ router.get('/dashboard', requireRole('Admin', 'Operation Manager'), asyncHandler
     pool.query(
       "SELECT pr.id,pr.pr_number,pr.title,pr.status,pr.priority,pr.required_date,d.name AS department_name,u.full_name AS requester " +
       "FROM purchase_requisitions pr JOIN departments d ON d.id=pr.department_id JOIN users u ON u.id=pr.requested_by " +
-      "WHERE pr.status IN ('submitted','dept_approved') ORDER BY CASE pr.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,pr.created_at LIMIT 50"
+      "WHERE pr.status IN ('submitted','dept_approved') ORDER BY CASE pr.priority WHEN 'emergency' THEN 0 WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,pr.created_at LIMIT 50"
     ),
     pool.query(
       "SELECT po.id,po.po_number,po.status,po.total_amount,po.expected_date,s.name AS supplier_name,d.name AS department_name, " +

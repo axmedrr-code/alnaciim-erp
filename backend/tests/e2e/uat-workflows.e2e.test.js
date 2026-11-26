@@ -143,8 +143,7 @@ const ACCOUNTS = [
   // the Raw-Material storekeeper follows production consumption in their own warehouse
   r = await api('store_rm', 'GET', `/inventory/movements?warehouse_id=${RMW}&product_id=${PRM}`);
   rep('C3a RM storekeeper sees the production consumption in the RM warehouse movements', r.s === 200 && (r.d || []).some((m) => Number(m.quantity) === 200 && m.movement_type === 'OUT'), `[${r.s}] ${JSON.stringify((r.d || []).slice(0, 2)).slice(0, 160)}`);
-  // NOTE (open design question): GET /inventory/stock-levels is readable by every Storekeeper for all warehouses; only writes/counts are warehouse-scoped.
-  rep('C3a RM storekeeper can read stock levels (read access is not warehouse-scoped by design today)', (await api('store_rm', 'GET', '/inventory/stock-levels')).s === 200);
+  rep('C3a RM storekeeper can read stock levels (own warehouse; scoping is asserted in section R)', (await api('store_rm', 'GET', '/inventory/stock-levels')).s === 200);
   rep('C3a FG storekeeper cannot post stock in the RM warehouse', (await api('store_fg', 'POST', '/inventory/movements', { product_id: PRM, warehouse_id: RMW, movement_type: 'OUT', quantity: 1, reference_type: 'adjustment' })).s === 403);
   rep('C4 prod1 cannot approve own batch output', (await api('prod1', 'POST', `/production/batches/${BA.id}/output-decision`, { decision: 'approve', reason: 'Self approval' })).s === 403);
   rep('C4 Technician cannot approve output', (await api('staff_maint', 'POST', `/production/batches/${BA.id}/output-decision`, { decision: 'approve', reason: 'Not mine' })).s === 403);
@@ -298,6 +297,39 @@ const ACCOUNTS = [
   rep('S Only Admin reaches user administration and backups', (await api('opm', 'GET', '/users')).s === 403 && (await api('fin', 'GET', '/backups')).s === 403 && (await api('invmgr', 'GET', '/backups')).s === 403);
   rep('S Admin cannot disable or demote their own account', (await api('admin', 'PUT', `/users/${U.admin.id}`, { is_active: false })).s >= 400);
   rep('S final ledger balanced', await gl());
+
+  // =====================================================================================================================
+  SECTION('R. RM storekeeper: sees only own warehouse; raises purchase requests incl. EMERGENCY and tracks them');
+  const RMX = await mkProd('PRMX', 'raw_material');
+  await api('admin', 'POST', '/inventory/movements', { product_id: RMX, warehouse_id: RMW2, movement_type: 'IN', quantity: 7, reference_type: 'adjustment' });
+  await api('admin', 'POST', '/inventory/movements', { product_id: RMX, warehouse_id: RMW, movement_type: 'IN', quantity: 3, reference_type: 'adjustment' });
+  r = await api('store_rm', 'GET', '/inventory/stock-levels');
+  rep('R1 RM storekeeper stock levels = own warehouse only', r.s === 200 && (r.d || []).length > 0 && (r.d || []).every((l) => Number(l.warehouse_id) === RMW), `[${r.s}] ${[...new Set((r.d || []).map((l) => l.warehouse_id))]}`);
+  rep('R1 asking for another warehouse is refused (403)', (await api('store_rm', 'GET', `/inventory/stock-levels?warehouse_id=${RMW2}`)).s === 403 && (await api('store_rm', 'GET', `/inventory/movements?warehouse_id=${RMW2}`)).s === 403);
+  rep('R1 movements and low-stock are own-warehouse only', ((await api('store_rm', 'GET', '/inventory/movements')).d || []).every((m) => Number(m.warehouse_id) === RMW) && ((await api('store_rm', 'GET', '/inventory/low-stock')).d || []).every((l) => Number(l.warehouse_id) === RMW));
+  rep('R1 other roles still see all warehouses (invmgr)', new Set(((await api('invmgr', 'GET', '/inventory/stock-levels')).d || []).map((l) => l.warehouse_id)).size > 1);
+  await pool.query('update users set assigned_warehouse_id=null where id=$1', [U.store_sp.id]);
+  rep('R1 a storekeeper with no assigned warehouse sees nothing', ((await api('store_sp', 'GET', '/inventory/stock-levels')).d || []).length === 0);
+  await asg('store_sp', SPW);
+
+  const RQ = { title: 'Raw material shortage', justification: 'PET preform stock will run out in two days; the bottling line stops', lines: [{ item_name: 'PET Preform 12g', quantity: 500, unit: 'pcs', estimated_unit_cost: 0.2 }] };
+  rep('R2 emergency request needs a real justification and a required-by date', (await api('store_rm', 'POST', PR, { ...RQ, priority: 'emergency', justification: 'too short', required_date: '2026-12-01' })).s === 400 && (await api('store_rm', 'POST', PR, { ...RQ, priority: 'emergency' })).s === 400);
+  r = await api('store_rm', 'POST', PR, { ...RQ, priority: 'emergency', required_date: '2026-12-01' }); const ER = r.d || {};
+  rep('R2 RM storekeeper raises an EMERGENCY purchase request', r.s === 201 && ER.priority === 'emergency', `[${r.s}] ${r.e}`);
+  rep('R2 submits it to the Department Head', (await api('store_rm', 'POST', `${PR}/${ER.id}/submit`)).s === 200);
+  rep('R3 the storekeeper tracks it: status + where it is waiting', await (async () => { const g = await api('store_rm', 'GET', `${PR}/${ER.id}`); return g.s === 200 && g.d.status === 'submitted' && g.d.priority === 'emergency'; })());
+  rep('R3 another storekeeper cannot see it', (await api('store_sp', 'GET', `${PR}/${ER.id}`)).s === 404);
+  rep('R4 emergency does NOT bypass approvals: Operation Manager cannot approve before the Department Head', (await api('opm', 'POST', `${PR}/${ER.id}/approve`, { decision: 'approve' })).s === 409);
+  const dept6 = (await q('select department_id d from users where id=$1', [U.store_rm.id]))[0].d;
+  await pool.query('update departments set manager_id=$1 where id=$2', [U.head_delivery.id, dept6]);
+  rep('R4 the department head approves, the Operation Manager approves', (await api('head_delivery', 'POST', `${PR}/${ER.id}/review`, { decision: 'approve', comments: 'Emergency confirmed' })).s === 200 && (await api('opm', 'POST', `${PR}/${ER.id}/approve`, { decision: 'approve', comments: 'Approved urgently' })).s === 200);
+  rep('R4 the storekeeper sees the approval history of own request', await (async () => { const g = await api('store_rm', 'GET', `${PR}/${ER.id}`); return g.s === 200 && g.d.status === 'approved' && (g.d.approvals || []).length >= 2; })());
+  r = await api('store_rm', 'POST', PR, { ...RQ, title: 'Second emergency', priority: 'emergency', required_date: '2026-12-02' }); await api('store_rm', 'POST', `${PR}/${r.d.id}/submit`);
+  const low = await api('staff_delivery', 'POST', PR, { title: 'Low priority', justification: 'Routine office supplies', priority: 'low', lines: LINES }); await api('staff_delivery', 'POST', `${PR}/${low.d.id}/submit`);
+  const dq = ((await api('opm', 'GET', '/operations/dashboard')).d || {});
+  const pend = (dq.requisitions || dq.pending_requisitions || []);
+  rep('R5 emergency requests are listed first on the Operation Manager dashboard', pend.length >= 2 && pend[0].priority === 'emergency', JSON.stringify(pend.slice(0, 3).map((x) => x.priority)));
+  rep('R ledger balanced', await gl());
 
   await finish();
 })().catch((e) => { console.log('FATAL', e && e.stack || e); process.exit(1); });

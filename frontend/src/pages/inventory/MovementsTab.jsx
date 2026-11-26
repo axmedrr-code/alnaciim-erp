@@ -13,8 +13,11 @@ export default function MovementsTab() {
   const [dateRange, setDateRange] = useState(defaultDateRange());
   const { rows, reload } = useApi(`/inventory/movements?from=${dateRange.from}&to=${dateRange.to}`, [dateRange.from, dateRange.to]);
   const { rows: products } = useApi('/products');
-  const { rows: warehouses } = useApi('/warehouses');
-  const [form, setForm] = useState(EMPTY_FORM);
+  const { rows: allWarehouses } = useApi('/warehouses');
+  // A Storekeeper can only record movements in their own assigned warehouse (the API enforces it too).
+  const ownWh = user?.role === 'Storekeeper' ? String(user.assignedWarehouseId || '') : '';
+  const warehouses = ownWh ? (allWarehouses || []).filter((w) => String(w.id) === ownWh) : allWarehouses;
+  const [form, setForm] = useState(ownWh ? { ...EMPTY_FORM, warehouse_id: ownWh } : EMPTY_FORM);
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState(null);
   const columns = [
@@ -38,7 +41,7 @@ export default function MovementsTab() {
         quantity: Number(form.quantity),
         reference_type: 'adjustment'
       });
-      setForm(EMPTY_FORM);
+      setForm(ownWh ? { ...EMPTY_FORM, warehouse_id: ownWh } : EMPTY_FORM);
       setShowForm(false);
       reload();
     } catch (err) {

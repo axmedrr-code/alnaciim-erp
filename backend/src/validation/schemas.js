@@ -429,7 +429,7 @@ const salesOrderCreate = z.object({
     cost_center_id: idOptional,
     project_id: idOptional,
     customer_tank_id: idOptional,
-    priority: z.enum(['low', 'normal', 'high', 'urgent']).optional()
+    priority: z.enum(['low', 'normal', 'high', 'urgent', 'emergency']).optional()
   })
 });
 
@@ -939,16 +939,22 @@ const requisitionLine = z.object({
   unit: z.string().trim().min(1, 'Unit is required').max(20),
   estimated_unit_cost: z.coerce.number().min(0).default(0)
 });
+// An emergency request must say why it cannot wait: a real justification and the date it is needed by.
+const emergencyRule = (b, ctx) => {
+  if (b.priority !== 'emergency') return;
+  if ((b.justification || '').length < 20) ctx.addIssue({ code: 'custom', path: ['justification'], message: 'Emergency requests need a justification of at least 20 characters' });
+  if (!b.required_date) ctx.addIssue({ code: 'custom', path: ['required_date'], message: 'Emergency requests need a required-by date' });
+};
 const requisitionBody = {
   department_id: idOptional,
   title: z.string().trim().min(3, 'Title is required').max(200),
   justification: z.string().trim().min(5, 'Justification is required').max(4000),
-  priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
+  priority: z.enum(['low', 'normal', 'high', 'urgent', 'emergency']).default('normal'),
   required_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').optional().nullable(),
   lines: z.array(requisitionLine).min(1, 'At least one line item is required').max(100)
 };
-const requisitionCreate = z.object({ body: z.object({ ...requisitionBody, submit: z.boolean().optional() }) });
-const requisitionUpdate = z.object({ body: z.object(requisitionBody) });
+const requisitionCreate = z.object({ body: z.object({ ...requisitionBody, submit: z.boolean().optional() }).superRefine(emergencyRule) });
+const requisitionUpdate = z.object({ body: z.object(requisitionBody).superRefine(emergencyRule) });
 const requisitionDecision = z.object({
   body: z.object({
     decision: z.enum(['approve', 'reject', 'revision']),

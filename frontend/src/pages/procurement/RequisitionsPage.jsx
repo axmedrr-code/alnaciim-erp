@@ -72,7 +72,7 @@ function RequisitionForm({ initial, onSaved, onCancel }) {
       <div className="form-grid" style={{ marginBottom: 14 }}>
         <div className="form-field" style={{ gridColumn: '1 / -1' }}><label>Title</label><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Replacement pump for line 2" /></div>
         <div className="form-field"><label>Priority</label>
-          <select value={priority} onChange={(e) => setPriority(e.target.value)}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select>
+          <select value={priority} onChange={(e) => setPriority(e.target.value)}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option><option value="emergency">Emergency (needs reason + required-by date)</option></select>
         </div>
         <div className="form-field"><label>Required by</label><input type="date" value={requiredDate} onChange={(e) => setRequiredDate(e.target.value)} /></div>
         <div className="form-field" style={{ gridColumn: '1 / -1' }}><label>Justification</label><textarea rows={3} value={justification} onChange={(e) => setJustification(e.target.value)} placeholder="Why is this needed?" /></div>
@@ -157,7 +157,7 @@ function RequisitionDetail({ id, onBack, onEdit }) {
         <div className="form-field"><label>Status</label><span className={`badge badge--${STATUS_BADGE[pr.status]}`}>{STATUS_LABEL[pr.status]}</span></div>
         <div className="form-field"><label>Department</label><span>{pr.department_name}</span></div>
         <div className="form-field"><label>Requested by</label><span>{pr.requester_name}</span></div>
-        <div className="form-field"><label>Priority</label><span style={{ textTransform: 'capitalize' }}>{pr.priority}</span></div>
+        <div className="form-field"><label>Priority</label><span style={{ textTransform: 'capitalize', ...(pr.priority === 'emergency' ? { color: '#b91c1c', fontWeight: 700 } : {}) }}>{pr.priority}</span></div>
         <div className="form-field"><label>Required by</label><span>{day(pr.required_date)}</span></div>
         <div className="form-field"><label>Estimated total</label><span>{money(pr.estimated_total)}</span></div>
         <div className="form-field"><label>Procurement Officer</label><span>{pr.assigned_name || '—'}</span></div>
@@ -257,7 +257,7 @@ export default function RequisitionsPage() {
             <tbody>{rows.map((r) => (
               <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => setView({ name: 'detail', id: r.id })}>
                 <td><strong>{r.pr_number}</strong></td><td>{r.title}</td><td>{r.department_name}</td><td>{r.requester_name}</td>
-                <td style={{ textTransform: 'capitalize' }}>{r.priority}</td><td>{day(r.required_date)}</td><td>{money(r.estimated_total)}</td>
+                <td style={{ textTransform: 'capitalize', ...(r.priority === 'emergency' ? { color: '#b91c1c', fontWeight: 700 } : {}) }}>{r.priority}</td><td>{day(r.required_date)}</td><td>{money(r.estimated_total)}</td>
                 <td><span className={`badge badge--${STATUS_BADGE[r.status]}`}>{STATUS_LABEL[r.status]}</span></td></tr>))}</tbody>
           </table>
         )}
