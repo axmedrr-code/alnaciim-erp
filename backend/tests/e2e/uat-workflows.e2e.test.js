@@ -118,8 +118,12 @@ const ACCOUNTS = [
   rep('B14 Finance cannot approve the payment', (await api('fin', 'POST', `${SI}/${si.id}/payments/${pay.id}/decision`, { decision: 'approve' })).s === 403);
   rep('B14 Operation Manager approves -> invoice paid', (await api('opm', 'POST', `${SI}/${si.id}/payments/${pay.id}/decision`, { decision: 'approve' })).s === 200 && (await api('fin', 'GET', `${SI}/${si.id}`)).d.status === 'paid');
   const pal = async (t, id) => Number((await q('select count(*) n from procurement_audit_logs where entity_type=$1 and entity_id=$2', [t, id]))[0].n);
-  rep('B15 procurement audit trail records who/when for the requisition, PO and payment', (await pal('requisition', pr.id)) >= 5 && (await pal('purchase_order', po.id)) >= 2, `${await pal('requisition', pr.id)}/${await pal('purchase_order', po.id)}`);
-  rep('B15 approval history cannot be edited through the API', (await api('opm', 'PUT', `${PR}/${pr.id}/approvals/1`, { decision: 'approve' })).s >= 400);
+  const central = async (t, id) => ((await api('admin', 'GET', `/audit-logs?entity_type=${t}&entity_id=${id}`)).d || []);
+  const cReq = await central('requisition', pr.id), cPo = await central('purchase_order', po.id), cInv = await central('supplier_invoice', si.id), cPay = await central('supplier_payment', pay.id), cIss = await central('material_issue', iss1.id);
+  rep('B15 central Admin audit log shows the requisition trail (create, review, approve, assign...)', cReq.length >= 5 && cReq.some((x) => x.action === 'CREATE') && cReq.every((x) => x.user_id), `${cReq.length}`);
+  rep('B15 central audit log shows PO, supplier invoice, payment and material issue events with the actor', cPo.length >= 2 && cInv.length >= 1 && cPay.length >= 1 && cIss.length >= 1, `${cPo.length}/${cInv.length}/${cPay.length}/${cIss.length}`);
+  rep('B15 procurement-specific append-only log also holds the full trail', (await pal('requisition', pr.id)) >= 5 && (await pal('purchase_order', po.id)) >= 2);
+  rep('B15 audit rows cannot be edited or deleted (append-only trigger)', await (async () => { try { await pool.query('update audit_logs set action=$1 where id=$2', ['DELETE', cReq[0].id]); return false; } catch (e) { return /append-only/i.test(e.message); } })() && await (async () => { try { await pool.query('delete from procurement_audit_logs where entity_type=$1', ['requisition']); return false; } catch (e) { return /append-only/i.test(e.message); } })());
   rep('B ledger balanced after the whole procurement chain', await gl());
 
   // =====================================================================================================================

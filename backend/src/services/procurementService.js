@@ -1,5 +1,6 @@
 // Shared procurement helpers: atomic reference numbers, the append-only audit log, signed approvals,
 // department-head checks and requisition visibility. Everything that mutates takes a transaction client.
+const { logAudit } = require('./auditService');
 const crypto = require('crypto');
 
 // PR-2026-00001 style numbers, atomic under concurrency (single-statement UPSERT on the counter row).
@@ -14,12 +15,17 @@ async function nextRef(client, prefix) {
   return `${prefix}-${year}-${String(rows[0].issued).padStart(5, '0')}`;
 }
 
+// Every procurement event is written to BOTH trails in the caller's transaction: the procurement-specific append-only log
+// (full action name, actor role) and the central audit_logs table that the Admin Audit Log screen reads. audit_logs only allows
+// CREATE/UPDATE/DELETE, so the specific procurement action is kept inside new_value.procurement_action.
 async function audit(client, { entityType, entityId, action, user, oldValue = null, newValue = null }) {
   await client.query(
     `INSERT INTO procurement_audit_logs (entity_type, entity_id, action, actor_id, actor_role, old_value, new_value)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [entityType, entityId, action, user.id, user.role, oldValue ? JSON.stringify(oldValue) : null, newValue ? JSON.stringify(newValue) : null]
   );
+  const central = action === 'create' ? 'CREATE' : action === 'delete' ? 'DELETE' : 'UPDATE';
+  await logAudit(client, { userId: user.id, action: central, entityType, entityId, oldValue, newValue: { ...(newValue || {}), procurement_action: action, actor_role: user.role } });
 }
 
 // A decision on a document. The signature hash covers the exact snapshot that was approved, who approved it, in
