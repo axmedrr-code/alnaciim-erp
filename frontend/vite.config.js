@@ -12,7 +12,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': 'http://localhost:4000'
+      // E2E_API_TARGET lets the Playwright suite (e2e/) point the dev proxy at its own throwaway backend.
+      '/api': process.env.E2E_API_TARGET || 'http://localhost:4000'
     }
   }
 });
