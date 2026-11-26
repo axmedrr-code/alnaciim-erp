@@ -90,8 +90,8 @@ Use department 3 (Delivery): requester `uat.staff.delivery`, head `uat.head.deli
 - [ ] **B10** `uat.store.rm` — *Purchase Orders → Receive*: receive **part** of the order as accepted, one line as **damaged** (with a note) and one as **rejected**. *Expect* GRN number, only accepted units in *Inventory → Stock Levels*, PO "partially received".
 - [ ] **B11** Try to receive more than ordered — *Expect* refused. Receive the rest — PO "received", requisition "fulfilled".
 - [ ] **B12** `uat.store.rm` — *Material Issues*: issue part of the goods to the Delivery department. `uat.store.rm` cannot confirm it; `uat.staff.delivery` or `uat.head.delivery` **disputes** it with a reason — stock returns to the warehouse; issue again and **confirm**.
-- [ ] **B13** `uat.proc1` — *Supplier Invoices & Vouchers*: enter the supplier invoice. *Expect* 3-way match against PO and accepted receipt; a wrong quantity/price shows a mismatch; a duplicate invoice number is refused.
-- [ ] **B14** `uat.fin` — approve the matched invoice, then request the supplier payment; **`uat.opm` approves the payment** (payments are approved by the Operation Manager, not by the requester); a voucher number is produced and the payment reduces **Accounts Payable** (Finance → Accounts Payable). The requester cannot approve their own payment.
+- [ ] **B13** `uat.fin` — *Supplier Invoices & Vouchers*: enter the supplier invoice (Procurement Officers **cannot** register invoices; `uat.proc1` trying must be refused). *Expect* 3-way match against PO and accepted receipt; a wrong quantity/price shows a mismatch; a duplicate invoice number is refused.
+- [ ] **B14** The invoice's creator cannot approve it, and there is only one Finance account, so **Admin** approves the matched invoice. Then `uat.fin` requests the supplier payment; **`uat.opm` approves the payment** (payments are approved by the Operation Manager, not by Finance); a voucher number is produced and the payment reduces **Accounts Payable** (Finance → Accounts Payable). Finance cannot approve the payment.
 - [ ] **B15** Audit: for the PR, PO, GRN and payment, every action shows who and when; the approval history cannot be edited.
 
 ### C. Production
@@ -145,6 +145,8 @@ Use department 3 (Delivery): requester `uat.staff.delivery`, head `uat.head.deli
 - [ ] **I1** Admin — *Settings → Users*: create a user, assign a role, department and warehouse; change the role (takes effect on the user's next screen); deactivate (the user is signed out at once). An Admin cannot disable or demote their own account.
 - [ ] **I2** Admin — *Settings → Audit Log*: review the trail for a requisition, a payment and a stock count: user, time, old and new values present.
 - [ ] **I3** *Settings → Backups* lists backups and the schedule. Trying to **restore** returns a clear "disabled on this server" message (by design: `ALLOW_DB_RESTORE` is not set). Do not try to enable it.
+
+> **Automated rehearsal:** `backend/tests/e2e/uat-workflows.e2e.test.js` runs sections B–H and the section-6 checks through the API with one account per UAT role (136 checks). Run it before UAT starts and after every fix; it does not replace the browser UAT.
 
 ## 6. Segregation-of-duties and "must not" checks
 
