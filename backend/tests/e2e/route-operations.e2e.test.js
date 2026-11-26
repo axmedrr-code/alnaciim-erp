@@ -29,6 +29,9 @@ const { start } = require('./harness');
   await api('admin', 'POST', '/inventory/movements', { product_id: BULK, warehouse_id: WHRO, movement_type: 'IN', quantity: 20000, reference_type: 'adjustment' });
   // Test drivers persist across runs, so every run plans on its own dates to avoid colliding with routes left by earlier runs.
   const off = 5 + (stamp % 3000);
+  // The persistent test drivers can still hold draft routes dated today from an earlier run (the double-booking rule then correctly
+  // refuses today's tank dispatches). Cancel those leftovers through the API itself (audited, drafts/ready only) before planning.
+  for (const x of await q(`select rr.id from route_runs rr join users u on u.id=rr.driver_id where u.email like 'rop.%' and rr.route_date >= current_date and rr.route_date < current_date + 2 and rr.status in ('draft','ready')`)) await api('admin', 'POST', `/routes/${x.id}/cancel`);
   const D1 = day(off), D2 = day(off + 1), D3 = day(off + 2), D4 = day(off + 3);
 
   // ---------- role scoping on the read side
