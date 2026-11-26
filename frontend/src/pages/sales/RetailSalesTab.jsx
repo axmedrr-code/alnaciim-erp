@@ -8,6 +8,7 @@ import { useApi } from '../../components/useApi';
 import Table from '../../components/Table';
 import client from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { canSee } from '../../utils/permissions';
 
 function money(v) { return `$${Number(v || 0).toFixed(2)}`; }
 
@@ -529,9 +530,10 @@ function InvoiceReportTable({ rows }) {
 function ReportBody({ reportKey, department }) {
   const isChart = ['daily-sales', 'monthly-sales'].includes(reportKey);
   const isList = ['top-customers', 'top-products'].includes(reportKey);
-  const { rows: data } = useApi(`/retail/reports/${reportKey}?department=${department}`);
+  const { rows: data, error } = useApi(`/retail/reports/${reportKey}?department=${department}`);
   const invoiceRows = !isChart && !isList ? data?.rows : null;
 
+  if (error) return <div className="error-box">{String(error)}</div>;
   if (!data) return <p className="muted">Loading…</p>;
 
   if (isChart) {
@@ -620,9 +622,12 @@ const RETAIL_TABS = [
 ];
 
 export default function RetailSalesTab() {
+  const { user } = useAuth();
   const [department, setDepartment] = useState('bottled_water');
+  // Reports are restricted server-side (PERM.RETAIL_REPORT); a Cashier must not see a tab that can only fail.
+  const tabs = RETAIL_TABS.filter((t) => t.key !== 'reports' || canSee(user?.role, 'RETAIL_REPORT'));
   const [activeKey, setActiveKey] = useState(RETAIL_TABS[0].key);
-  const active = RETAIL_TABS.find((t) => t.key === activeKey) || RETAIL_TABS[0];
+  const active = tabs.find((t) => t.key === activeKey) || tabs[0];
   const Active = active.Component;
 
   return (
@@ -641,7 +646,7 @@ export default function RetailSalesTab() {
         </div>
 
         <div className="grouped-nav__subtabs" style={{ marginBottom: 18 }}>
-          {RETAIL_TABS.map((t) => {
+          {tabs.map((t) => {
             const Icon = t.icon;
             return (
               <button key={t.key} className={`grouped-nav__subtab ${t.key === active.key ? 'active' : ''}`} onClick={() => setActiveKey(t.key)}>
