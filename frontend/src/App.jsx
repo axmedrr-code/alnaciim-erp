@@ -4,6 +4,8 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
+import RoleRoute from './components/RoleRoute';
+import NotFound from './components/NotFound';
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const InventoryPage = lazy(() => import('./pages/inventory/InventoryPage'));
@@ -42,20 +44,21 @@ export default function App() {
               }
             >
               <Route index element={<Home />} />
-              <Route path="inventory" element={<InventoryPage />} />
-              <Route path="production" element={<ProductionPage />} />
-              <Route path="sales" element={<SalesPage />} />
-              <Route path="procurement" element={<ProcurementPage />} />
-              <Route path="requisitions" element={<RequisitionsPage />} />
-              <Route path="operations" element={<OperationsDashboard />} />
-              <Route path="logistics" element={<LogisticsExceptionsPage />} />
-              <Route path="tanker-loading" element={<TankerLoadingPage />} />
-              <Route path="collections" element={<CollectionsPage />} />
-              <Route path="maintenance" element={<MaintenancePage />} />
-              <Route path="finance" element={<FinancePage />} />
-              <Route path="reports" element={<ReportsPage />} />
-              <Route path="settings" element={<SettingsPage />} />
-              <Route path="driver" element={<DriverPage />} />
+              <Route path="inventory" element={<RoleRoute path="/inventory"><InventoryPage /></RoleRoute>} />
+              <Route path="production" element={<RoleRoute path="/production"><ProductionPage /></RoleRoute>} />
+              <Route path="sales" element={<RoleRoute path="/sales"><SalesPage /></RoleRoute>} />
+              <Route path="procurement" element={<RoleRoute path="/procurement"><ProcurementPage /></RoleRoute>} />
+              <Route path="requisitions" element={<RoleRoute path="/requisitions"><RequisitionsPage /></RoleRoute>} />
+              <Route path="operations" element={<RoleRoute path="/operations"><OperationsDashboard /></RoleRoute>} />
+              <Route path="logistics" element={<RoleRoute path="/logistics"><LogisticsExceptionsPage /></RoleRoute>} />
+              <Route path="tanker-loading" element={<RoleRoute path="/tanker-loading"><TankerLoadingPage /></RoleRoute>} />
+              <Route path="collections" element={<RoleRoute path="/collections"><CollectionsPage /></RoleRoute>} />
+              <Route path="maintenance" element={<RoleRoute path="/maintenance"><MaintenancePage /></RoleRoute>} />
+              <Route path="finance" element={<RoleRoute path="/finance"><FinancePage /></RoleRoute>} />
+              <Route path="reports" element={<RoleRoute path="/reports"><ReportsPage /></RoleRoute>} />
+              <Route path="settings" element={<RoleRoute path="/settings"><SettingsPage /></RoleRoute>} />
+              <Route path="driver" element={<RoleRoute path="/driver"><DriverPage /></RoleRoute>} />
+              <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>
         </Suspense>

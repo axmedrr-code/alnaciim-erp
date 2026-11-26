@@ -16,6 +16,7 @@ export default function App() {
           <Route path="routes" element={<RoutePlanning />} />
           <Route path="import" element={<BulkImport />} />
         </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AuthProvider>
   );
