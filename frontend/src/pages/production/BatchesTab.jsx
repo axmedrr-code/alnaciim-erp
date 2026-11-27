@@ -1,13 +1,25 @@
 import { useState } from 'react';
-import { Plus, X, CheckCircle2, AlertCircle, Pencil, Trash2, Play, PackageCheck, RotateCcw } from 'lucide-react';
+import { Plus, X, CheckCircle2, AlertCircle, Pencil, Trash2, Play, PackageCheck, RotateCcw, ClipboardCheck } from 'lucide-react';
 import { useApi } from '../../components/useApi';
 import Table from '../../components/Table';
 import client from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { CompleteBatchPanel, OutputDecisionPanel } from './BatchPanels';
 
 const TYPE_LABEL = { RO_WATER: 'RO Water', BOTTLING: 'Bottling', ICE: 'Ice' };
-const STATUS_BADGE = { planned: 'pending', in_progress: 'info', completed: 'ok', cancelled: 'low', reversed: 'low' };
-const QC_BADGE = { pending: 'pending', passed: 'ok', failed: 'low' };
+// One plain-language state per batch instead of three separate status columns.
+export function batchState(b) {
+  if (b.status === 'planned') return ['Planned', 'pending'];
+  if (b.status === 'in_progress') return ['In progress', 'info'];
+  if (b.status === 'reversed') return ['Reversed', 'low'];
+  if (b.status === 'cancelled') return ['Cancelled', 'low'];
+  if (b.qc_status === 'failed') return ['QC failed, no stock', 'low'];
+  if (b.output_approval_status === 'pending') return ['Awaiting approval', 'pending'];
+  if (b.output_approval_status === 'approved') return ['In stock', 'ok'];
+  if (b.output_approval_status === 'rejected') return ['Output rejected', 'low'];
+  return ['Completed', 'ok'];
+}
+const TEST_BATCH = /^(TST|E2E)-/i;
 const DEFAULT_UNIT = { RO_WATER: 'm³', BOTTLING: 'box', ICE: 'kg' };
 
 function emptyForm(productionType) {
@@ -31,14 +43,13 @@ export default function BatchesTab({ productionType }) {
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const [completingId, setCompletingId] = useState(null);
-  const [actualQty, setActualQty] = useState('');
-  const [wastageQty, setWastageQty] = useState('');
-  const [wastageNotes, setWastageNotes] = useState('');
-  const [varianceNotes, setVarianceNotes] = useState('');
-  const [materialsWarehouseId, setMaterialsWarehouseId] = useState('');
-  const [qcStatus, setQcStatus] = useState('');
-  const [completeError, setCompleteError] = useState(null);
+  const [completing, setCompleting] = useState(null);
+  const [deciding, setDeciding] = useState(null);
+  const [view, setView] = useState(canManage ? 'mine' : 'all');
+  const [hideTest, setHideTest] = useState(true);
+  const needsMe = (b) => b.status === 'planned' || b.status === 'in_progress'
+    || (b.output_approval_status === 'pending' && (Number(b.completed_by || b.supervisor_id) !== Number(user?.id) || user?.role === 'Admin'));
+  const shown = (rows || []).filter((b) => (!hideTest || !TEST_BATCH.test(b.batch_number || '')) && (view === 'all' || needsMe(b)));
 
   function flashSuccess(msg) { setSuccess(msg); setTimeout(() => setSuccess(null), 4000); }
 
@@ -95,42 +106,7 @@ export default function BatchesTab({ productionType }) {
     reload();
   }
 
-  async function completeBatch(id) {
-    setCompleteError(null);
-    if (!qcStatus) { setCompleteError('Select a QC Status before completing this batch.'); return; }
-    try {
-      await client.put(`/production/batches/${id}/complete`, {
-        actual_qty: Number(actualQty),
-        wastage_qty: Number(wastageQty) || 0,
-        wastage_notes: wastageNotes || undefined,
-        variance_notes: varianceNotes || undefined,
-        materials_warehouse_id: materialsWarehouseId ? Number(materialsWarehouseId) : undefined,
-        qc_status: qcStatus
-      });
-      setCompletingId(null);
-      setActualQty('');
-      setWastageQty('');
-      setWastageNotes('');
-      setVarianceNotes('');
-      setMaterialsWarehouseId('');
-      setQcStatus('');
-      flashSuccess(qcStatus === 'passed' ? 'Batch completed — output awaits independent approval before entering stock.' : 'Batch completed — QC did not pass, no stock was added.');
-      reload();
-    } catch (err) {
-      setCompleteError(err.response?.data?.error || 'Failed to complete batch');
-    }
-  }
-
-  async function decideOutput(batch, decision) {
-    const reason = window.prompt(`${decision === 'approve' ? 'Approval' : 'Rejection'} reason for ${batch.batch_number} (required):`);
-    if (reason === null) return;
-    if (reason.trim().length < 3) { setError('Enter a reason of at least 3 characters.'); return; }
-    try {
-      await client.post(`/production/batches/${batch.id}/output-decision`, { decision, reason });
-      flashSuccess(decision === 'approve' ? 'Production output approved and posted to inventory.' : 'Production output rejected; no finished goods were posted.');
-      reload();
-    } catch (err) { setError(err.response?.data?.error || 'Could not decide production output.'); }
-  }
+  function panelDone(msg) { setCompleting(null); setDeciding(null); flashSuccess(msg); reload(); }
 
   return (
     <div>
@@ -139,6 +115,13 @@ export default function BatchesTab({ productionType }) {
         {canManage && <button className="btn" onClick={() => { setForm(emptyForm(productionType)); setEditingId(null); setError(null); setShowForm((s) => !s); }}>
           {showForm ? <><X size={15} /> Cancel</> : <><Plus size={15} /> New Production Order</>}
         </button>}
+        {canManage && <div role="group" aria-label="Which batches" style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+          <button className={view === 'mine' ? 'btn small' : 'btn secondary small'} aria-pressed={view === 'mine'} onClick={() => setView('mine')}>Needs action</button>
+          <button className={view === 'all' ? 'btn small' : 'btn secondary small'} aria-pressed={view === 'all'} onClick={() => setView('all')}>All batches</button>
+        </div>}
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5, fontWeight: 400 }}>
+          <input type="checkbox" checked={hideTest} onChange={(e) => setHideTest(e.target.checked)} /> Hide automated-test batches (TST-, E2E-)
+        </label>
       </div>
 
       {showForm && (
@@ -203,85 +186,37 @@ export default function BatchesTab({ productionType }) {
           columns={[
             { key: 'batch_number', header: 'Batch #' },
             ...(productionType ? [] : [{ key: 'production_type', header: 'Type', render: (r) => TYPE_LABEL[r.production_type] || r.production_type }]),
-            { key: 'machine_name', header: 'Machine' },
-            { key: 'product_name', header: 'Product', render: (r) => r.product_name || '—' },
-            {
-              key: 'progress', header: 'Progress', sortable: false, render: (r) => {
-                const planned = Number(r.planned_qty) || 0;
-                const actual = Number(r.actual_qty) || 0;
-                const pct = planned > 0 ? Math.min(100, Math.round((actual / planned) * 100)) : (r.status === 'completed' ? 100 : 0);
-                return (
-                  <div style={{ minWidth: 140 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>
-                      <span>{actual || 0}/{planned || '—'} {r.unit}</span><span>{pct}%</span>
-                    </div>
-                    <div style={{ height: 6, borderRadius: 999, background: 'var(--border-light)', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${pct}%`, background: pct >= 100 ? 'var(--success)' : 'var(--primary)', borderRadius: 999 }} />
-                    </div>
-                  </div>
-                );
-              }
-            },
-            { key: 'wastage_qty', header: 'Wastage', render: (r) => Number(r.wastage_qty) > 0 ? Number(r.wastage_qty) : '—' },
-            { key: 'production_variance', header: 'Variance', render: (r) => r.actual_qty == null ? '—' : `${Number(r.actual_qty) - Number(r.planned_qty)} ${r.unit}` },
-            { key: 'status', header: 'Status', render: (r) => <span className={`badge badge--${STATUS_BADGE[r.status]}`}>{r.status.replace('_', ' ')}</span> },
-            { key: 'qc_status', header: 'QC Status', render: (r) => r.status === 'completed' || r.status === 'reversed' ? <span className={`badge badge--${QC_BADGE[r.qc_status]}`}>{r.qc_status}</span> : '—' },
-            { key: 'output_approval_status', header: 'Output Approval', render: (r) => r.output_approval_status === 'pending'
-              ? <span className="badge badge--pending">Pending</span> : (r.output_approval_status || 'legacy').replace('_', ' ') },
+            { key: 'product_name', header: 'Product', render: (r) => <div><div>{r.product_name || <span style={{ color: 'var(--danger)' }}>No output product</span>}</div><div className="muted" style={{ fontSize: 11.5 }}>{r.machine_name}</div></div> },
+            { key: 'actual_qty', header: 'Quantity', render: (r) => <div><div>{r.actual_qty == null ? '—' : Number(r.actual_qty)} / {Number(r.planned_qty) || '—'} {r.unit}</div>{Number(r.wastage_qty) > 0 && <div className="muted" style={{ fontSize: 11.5 }}>wastage {Number(r.wastage_qty)} {r.unit}</div>}</div> },
+            { key: 'status', header: 'Status', render: (r) => { const [label, tone] = batchState(r); return <span className={`badge badge--${tone}`}>{label}</span>; } },
             canManage && {
-              key: 'actions', header: '', sortable: false, render: (b) => (
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              key: 'actions', header: 'Next step', sortable: false, render: (b) => (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', alignItems: 'center' }}>
+                  {b.status === 'planned' && <button className="btn small" onClick={() => startBatch(b.id)}><Play size={13} /> Start</button>}
+                  {b.status === 'in_progress' && <button className="btn small" onClick={() => setCompleting(b)}><PackageCheck size={13} /> Complete…</button>}
+                  {b.output_approval_status === 'pending' && b.status === 'completed' && (
+                    Number(b.completed_by || b.supervisor_id) === Number(user?.id) && user?.role !== 'Admin'
+                      ? <span className="muted" style={{ fontSize: 12 }}>Waiting for another manager</span>
+                      : <button className="btn small" onClick={() => setDeciding(b)}><ClipboardCheck size={13} /> Review output…</button>
+                  )}
                   {['planned', 'in_progress'].includes(b.status) && (
                     <>
-                      <button className="btn-icon" title="Edit" onClick={() => startEdit(b)}><Pencil size={13} /></button>
-                      <button className="btn-icon" title="Delete" onClick={() => deleteBatch(b)}><Trash2 size={13} /></button>
+                      <button className="btn-icon" title="Edit" aria-label={`Edit ${b.batch_number}`} onClick={() => startEdit(b)}><Pencil size={13} /></button>
+                      <button className="btn-icon" title="Delete" aria-label={`Delete ${b.batch_number}`} onClick={() => deleteBatch(b)}><Trash2 size={13} /></button>
                     </>
                   )}
-                  {b.status === 'completed' && <button className="btn secondary" onClick={() => reverseBatch(b)}><RotateCcw size={13} /> Reverse</button>}
-                  {b.output_approval_status === 'pending' && <>
-                    <button className="btn" onClick={() => decideOutput(b, 'approve')}>Approve Output</button>
-                    <button className="btn secondary" onClick={() => decideOutput(b, 'reject')}>Reject Output</button>
-                  </>}
-                  {b.status === 'planned' && <button className="btn secondary" onClick={() => startBatch(b.id)}><Play size={13} /> Start</button>}
-                  {b.status === 'in_progress' && completingId !== b.id && (
-                    <button className="btn secondary" onClick={() => setCompletingId(b.id)}><PackageCheck size={13} /> Complete</button>
-                  )}
-                  {completingId === b.id && (
-                    <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        <input style={{ width: 80 }} type="number" step="0.001" placeholder="Actual qty" value={actualQty} onChange={(e) => setActualQty(e.target.value)} />
-                        <input style={{ width: 80 }} type="number" step="0.001" placeholder="Wastage" value={wastageQty} onChange={(e) => setWastageQty(e.target.value)} />
-                        <input style={{ width: 140 }} placeholder="Variance reason" value={varianceNotes} onChange={(e) => setVarianceNotes(e.target.value)} />
-                        <input style={{ width: 140 }} placeholder="Wastage notes" value={wastageNotes} onChange={(e) => setWastageNotes(e.target.value)} />
-                        <select style={{ width: 130 }} value={materialsWarehouseId} onChange={(e) => setMaterialsWarehouseId(e.target.value)}>
-                          <option value="">Materials from…</option>
-                          {warehouses?.filter((w) => w.is_active && w.type === 'raw_material').map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                        </select>
-                        <select style={{ width: 110 }} value={qcStatus} onChange={(e) => setQcStatus(e.target.value)}>
-                          <option value="">QC Status…</option>
-                          <option value="passed">Passed</option>
-                          <option value="failed">Failed</option>
-                        </select>
-                        <button className="btn" disabled={!actualQty} onClick={() => completeBatch(b.id)}>Confirm</button>
-                      </span>
-                      {qcStatus === 'failed' && (
-                        <span style={{ fontSize: 11, color: 'var(--danger)' }}>Failed QC — this batch will complete, but no stock will be added.</span>
-                      )}
-                      {qcStatus === 'passed' && (
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Passed QC output will wait for a different authorized user to approve the stock receipt.</span>
-                      )}
-                      {completeError && <span style={{ fontSize: 11, color: 'var(--danger)' }}>{completeError}</span>}
-                    </span>
-                  )}
+                  {b.status === 'completed' && <button className="btn-icon" title="Reverse" aria-label={`Reverse ${b.batch_number}`} onClick={() => reverseBatch(b)}><RotateCcw size={13} /></button>}
                 </div>
               )
             }
           ].filter(Boolean)}
-          rows={rows}
-          emptyText="No production orders yet."
+          rows={shown}
+          emptyText={view === 'mine' ? 'Nothing needs your action. Switch to All batches to see the rest.' : 'No production orders yet.'}
           searchable searchPlaceholder="Search batch #, machine, product…" sortable pageSize={10}
         />
       </div>
+      {completing && <CompleteBatchPanel batch={completing} warehouses={warehouses} onClose={() => setCompleting(null)} onDone={panelDone} />}
+      {deciding && <OutputDecisionPanel batch={deciding} me={user} onClose={() => setDeciding(null)} onDone={panelDone} />}
     </div>
   );
 }

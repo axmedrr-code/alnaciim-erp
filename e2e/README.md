@@ -23,18 +23,19 @@ Set `TEST_DATABASE_SSL=true` for Neon. Ports: `E2E_API_PORT` (5590), `E2E_ERP_PO
 ## What the run does
 
 1. Starts the backend with a throwaway JWT secret and the ERP dev server (its `/api` proxy points at that backend via `E2E_API_TARGET`).
-2. Creates or refreshes `pwui.{admin,cashier,store_fg,store_rm,collector,reset_target}@alnaciim.test` with a **random per-run password**
+2. Creates or refreshes `pwui.{admin,cashier,store_fg,store_rm,collector,reset_target,prod1,prod2}@alnaciim.test` with a **random per-run password**
    (never printed; kept only in `e2e/.state/state.json`, mode 0600, git-ignored). `pwui.admin` only seeds fixtures through the API.
 3. Seeds warehouses `TST-PWUI-FG` / `TST-PWUI-RM`, two products, stock (through the API, so the ledger stays signed), a cash
    customer and a debtor with a $20.00 bottled-water credit invoice.
 4. Teardown stops the servers, gives every `pwui.*` account a new random hash and deactivates it. Fixture data is kept, not deleted.
 
-## Coverage (25 tests)
+## Coverage (29 tests)
 
 | Spec | Checks |
 |---|---|
 | `access` | wrong password refused; signed-out redirect; for Cashier, Storekeeper, Collector: exact menu, forbidden URLs show the access message, unknown URL shows Page not found, `/login` redirect, logout clears the session |
 | `cashier` | only Retail Sales & Billing; Bottled Water / Ice only; no Reports tab; cash sale through the form saved as paid, stock reduced by exactly the sold quantity in the database, listed in Sales List; no sale without a customer |
+| `production` | Production Orders: "Needs action" view hides automated-test batches; a batch with no output product or no BOM says why it cannot be completed; Complete panel with labelled fields, required warehouse and QC, BOM preview of actual + wastage, raw materials deducted and nothing added to stock yet; another Production Manager reviews the output (quantities, wastage, materials used, completed by), a reason is required, approval adds the stock; no browser prompt anywhere |
 | `storekeeper` | FG and RM storekeepers each see only their own warehouse (one picker option, only own rows and products) |
 | `admin-reset` | Settings → Users: reset offered only for non-Admin accounts (not own, not other Admins); a common password refused with nothing changed; a reset through the dialog never shows the password, is audited (who, whose, when, no password) and the old password stops working while the new one signs in |
 | `collector` | no Employee Performance tab; partial then full payment through Receive Payment, balance on screen and Accounts Receivable (1100) in the ledger follow; zero amount refused |

@@ -256,15 +256,31 @@ router.get('/batches', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async 
   const { rows } = await pool.query(
     `SELECT pb.*, (pb.actual_qty - pb.planned_qty) AS production_variance,
             CASE WHEN pb.planned_qty > 0 AND pb.actual_qty IS NOT NULL THEN ((pb.actual_qty - pb.planned_qty) / pb.planned_qty) * 100 ELSE NULL END AS production_variance_pct,
-            m.name AS machine_name, p.name AS product_name, u.full_name AS supervisor_name
+            m.name AS machine_name, p.name AS product_name, u.full_name AS supervisor_name,
+            cu.full_name AS completed_by_name, dw.name AS destination_warehouse_name
      FROM production_batches pb
      JOIN machines m ON m.id = pb.machine_id
      LEFT JOIN products p ON p.id = pb.product_id
      JOIN users u ON u.id = pb.supervisor_id
+     LEFT JOIN users cu ON cu.id = pb.completed_by
+     LEFT JOIN warehouses dw ON dw.id = pb.destination_warehouse_id
      ${where}
      ORDER BY pb.start_time DESC NULLS LAST`,
     params
   );
+  res.json({ data: rows, error: null });
+}));
+
+// Raw materials a batch actually consumed (read-only), so the output approver sees what went in before deciding.
+router.get('/batches/:id/materials', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) throw new ApiError(404, 'Batch not found');
+  const batch = (await pool.query('SELECT id FROM production_batches WHERE id = $1', [id])).rows[0];
+  if (!batch) throw new ApiError(404, 'Batch not found');
+  const { rows } = await pool.query(
+    `SELECT pbm.product_id, p.name AS product_name, p.unit, pbm.quantity_used, w.name AS warehouse_name
+     FROM production_batch_materials pbm JOIN products p ON p.id = pbm.product_id LEFT JOIN warehouses w ON w.id = pbm.warehouse_id
+     WHERE pbm.batch_id = $1 ORDER BY p.name`, [id]);
   res.json({ data: rows, error: null });
 }));
 

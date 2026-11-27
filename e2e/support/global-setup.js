@@ -17,7 +17,9 @@ const ACCOUNTS = [
   ['store_fg', 'Storekeeper', 6],
   ['store_rm', 'Storekeeper', 6],
   ['collector', 'Collector', null],
-  ['reset_target', 'Cashier', null] // only for admin-reset.spec.js, whose password it changes
+  ['reset_target', 'Cashier', null], // only for admin-reset.spec.js, whose password it changes
+  ['prod1', 'Production Manager', 1], // completes batches (production.spec.js)
+  ['prod2', 'Production Manager', 1] // approves the output prod1 completed
 ];
 
 async function waitFor(url, label, tries = 120) {
@@ -125,10 +127,26 @@ module.exports = async function globalSetup() {
       customer_id: debtor.id, department: 'bottled_water', warehouse_id: FG, payment_type: 'credit', items: [{ product_id: bottle.id, quantity: 10, unit_price: 2 }]
     });
 
+    // Production: a machine, a BOM (1 preform per bottle), a finished product with no BOM, and three planned batches.
+    const machineId = (await q(
+      `insert into machines (code, name, type) values ('PWUI-FILL','PWUI Filler','FILLING_LINE') on conflict (code) do update set status='operational' returning id`
+    ))[0].id;
+    const iceCat = (await catId('Ice Products')) || bottledCat;
+    const noBom = await mkProd('PWUI-NOBOM', 'PWUI Ice Bag', iceCat, 'finished_good');
+    await call('POST', '/production/bom', { product_id: bottle.id, name: `PWUI BOM ${stamp}`, items: [{ raw_material_product_id: preform.id, quantity_per_unit: 1 }] });
+    const mkBatch = async (suffix, productId) => (await call('POST', '/production/batches', {
+      batch_number: `PWUI-${suffix}-${stamp}`, production_type: 'BOTTLING', machine_id: machineId, product_id: productId || undefined,
+      planned_qty: 20, unit: 'pcs', shift: 'Morning', destination_warehouse_id: productId ? FG : undefined
+    }));
+    const batchMain = await mkBatch('MAIN', bottle.id);
+    const batchNoBom = await mkBatch('NOBOM', noBom.id);
+    const batchNoProduct = await mkBatch('NOPROD', null);
+
     const state = {
       password, users, procs, apiPort: API_PORT, stamp,
       warehouses: { fg: { id: FG, name: 'PWUI Finished Store' }, rm: { id: RM, name: 'PWUI Raw Store' } },
-      products: { bottle, preform },
+      products: { bottle, preform, noBom },
+      batches: { main: batchMain.batch_number, noBom: batchNoBom.batch_number, noProduct: batchNoProduct.batch_number },
       customers: { cash: cashCustomer, debtor },
       creditInvoice: { id: credit.id, hno: credit.invoice_hno, total: Number(credit.total_amount) }
     };

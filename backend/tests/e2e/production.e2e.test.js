@@ -59,6 +59,14 @@ const { start } = require('./harness');
   r = await api('pm1', 'POST', `/production/batches/${A.id}/output-decision`, { decision: 'approve', reason: 'Self approval' }); rep('The supervisor who completed the batch cannot approve its output (403)', r.s === 403);
   r = await api('tech', 'POST', `/production/batches/${A.id}/output-decision`, { decision: 'approve', reason: 'Technician approval' }); rep('Technician cannot approve output (403)', r.s === 403);
   r = await api('pm2', 'POST', `/production/batches/${A.id}/output-decision`, { decision: 'approve', reason: '' }); rep('Approval needs a reason (400)', r.s === 400);
+  // read-only materials view used by the output-review panel
+  r = await api('pm2', 'GET', `/production/batches/${A.id}/materials`);
+  rep('The approver can see the materials the batch consumed (product, quantity, warehouse)', r.s === 200 && r.d.length > 0 && r.d.every((m) => m.product_name && Number(m.quantity_used) > 0 && m.warehouse_name), `[${r.s}] ${r.e}`);
+  rep('Materials view is read-only for roles with production view (Cashier refused)', (await api('cash', 'GET', `/production/batches/${A.id}/materials`)).s === 403);
+  rep('Materials of an unknown batch -> 404', (await api('pm2', 'GET', '/production/batches/99999999/materials')).s === 404);
+  r = await api('pm2', 'GET', '/production/batches');
+  const listedA = (r.d || []).find((b) => b.id === A.id);
+  rep('The batch list names who completed it and the destination warehouse', !!listedA && listedA.completed_by_name === `E2E prod pm1` && !!listedA.destination_warehouse_name, listedA && `${listedA.completed_by_name} / ${listedA.destination_warehouse_name}`);
   r = await api('pm1', 'POST', `/production/batches/${A.id}/reverse`, { reason: 'too early' }); rep('A batch with pending output approval cannot be reversed (409)', r.s === 409);
   r = await api('pm2', 'POST', `/production/batches/${A.id}/output-decision`, { decision: 'approve', reason: 'QC sheet checked' });
   rep('A second manager approves -> 90 finished units enter stock', r.s === 200 && r.d.output_approval_status === 'approved' && (await stock(FG, FGW)) === 90, `[${r.s}] ${r.e}`);
