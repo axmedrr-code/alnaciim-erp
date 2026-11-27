@@ -15,7 +15,7 @@
     "test:logistics:truck-return": "node --test tests/production/truckReconciliation.test.js",
     "test:logistics:schemas": "node --test tests/logistics/logisticsSchemas.test.js",
     "test:migrations:plan": "node --test tests/migrations/schemaMigrationPlan.test.js",
-    "test:unit": "node --test tests/rbac.test.js tests/deliveryAccessPolicy.test.js tests/billingAccessPolicy.test.js tests/customerReadPolicy.test.js tests/retailCustomerSearch.test.js tests/customerImportErrors.test.js tests/productReadPolicy.test.js tests/accountingReversal.test.js tests/chartOfAccountsPolicy.test.js tests/inventory/stockLedger.test.js tests/procurement/phase5.matching.test.js tests/production/outputApprovalPolicy.test.js tests/production/downtimePolicy.test.js tests/production/truckReconciliation.test.js tests/logistics/logisticsSchemas.test.js tests/migrations/schemaMigrationPlan.test.js",
+    "test:unit": "node --test tests/passwordPolicy.test.js tests/rbac.test.js tests/deliveryAccessPolicy.test.js tests/billingAccessPolicy.test.js tests/customerReadPolicy.test.js tests/retailCustomerSearch.test.js tests/customerImportErrors.test.js tests/productReadPolicy.test.js tests/accountingReversal.test.js tests/chartOfAccountsPolicy.test.js tests/inventory/stockLedger.test.js tests/procurement/phase5.matching.test.js tests/production/outputApprovalPolicy.test.js tests/production/downtimePolicy.test.js tests/production/truckReconciliation.test.js tests/logistics/logisticsSchemas.test.js tests/migrations/schemaMigrationPlan.test.js",
     "test:e2e:tanks-maintenance": "node tests/e2e/tanks-maintenance.e2e.test.js",
     "test:e2e:backups": "node tests/e2e/run-backups-e2e.js",
     "test:e2e:users": "node tests/e2e/users.e2e.test.js",

@@ -14,8 +14,7 @@ require('dotenv').config();
 const readline = require('readline');
 const bcrypt = require('bcryptjs');
 const { pool } = require('../config/db');
-
-const COMMON = /^(password|passw0rd|letmein|welcome|qwerty|admin|alnaciim|changeme|12345)/i;
+const { passwordPolicyError } = require('../utils/passwordPolicy');
 
 function parseArgs(argv) {
   const flags = new Set();
@@ -48,11 +47,9 @@ function ask(question) {
   const { email, yes, expectHost } = parseArgs(process.argv.slice(2));
   const password = process.env.NEW_PASSWORD || '';
   if (!email) throw new Error('Usage: NEW_PASSWORD=... node src/scripts/set-user-password.js <email> [--yes] [--expect-host=<host>]');
-  if (password.length < 12) throw new Error('NEW_PASSWORD must be set and at least 12 characters long');
-  // Only compare against the e-mail's local part when it is long enough to be meaningful (a 1-2 character
-  // local part would otherwise reject almost every password).
-  const localPart = email.split('@')[0];
-  if (COMMON.test(password) || (localPart.length >= 5 && password.toLowerCase().includes(localPart))) throw new Error('NEW_PASSWORD is too guessable');
+  // Same rule as the Admin reset in the app (utils/passwordPolicy.js).
+  const policyError = passwordPolicyError(password, email);
+  if (policyError) throw new Error(`NEW_PASSWORD rejected: ${policyError}`);
 
   const target = describeTarget();
   if (expectHost && expectHost !== target.host) {
@@ -70,7 +67,7 @@ function ask(question) {
   const hash = await bcrypt.hash(password, 10); // same cost the app uses elsewhere (keeps login timing uniform)
   const { rowCount } = await pool.query('UPDATE users SET password_hash = $1, password_changed_at = now() WHERE lower(email) = $2', [hash, email]);
   if (!rowCount) throw new Error(`No user with email ${email} — nothing changed`);
-  console.log(`Password updated for ${email}. Existing sessions stay valid until their token expires.`);
+  console.log(`Password updated for ${email}. Sessions opened before this change are signed out (within the auth cache time, 30 s by default).`);
 })()
   .catch((err) => { console.error(String(err.message).replace(/postgres(ql)?:\/\/\S+/gi, '<url>')); process.exitCode = 1; })
   .finally(() => pool.end());

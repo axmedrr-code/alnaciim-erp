@@ -103,17 +103,51 @@ const { start } = require('./harness');
   r = await login(nu.email, np); rep('The new password works', r.s === 200);
   r = await raw('POST', '/auth/change-password', { current_password: np, new_password: pw() }); rep('Changing a password needs a signed-in session (401)', r.s === 401);
   const reset = pw();
-  r = await api('cash', 'PUT', `/users/${N1.id}/password`, { password: reset }); rep('A non-admin cannot reset passwords (403)', r.s === 403);
-  r = await api('adm2', 'PUT', `/users/${N1.id}/password`, { password: 'tiny' }); rep('An Admin reset below the minimum length -> 400', r.s === 400);
-  r = await api('adm2', 'PUT', '/users/99999999/password', { password: reset }); rep('Resetting an unknown user -> 404', r.s === 404);
-  r = await api('adm2', 'PUT', `/users/${N1.id}/password`, { password: reset }); rep('Admin resets a forgotten password; nothing sensitive is returned', r.s === 200 && r.d.password_reset === true && !JSON.stringify(r.b).includes(reset));
+  const two = (p, c = p) => ({ password: p, password_confirmation: c });
+  const hashOf = async (id) => (await q('select password_hash from users where id=$1', [id]))[0].password_hash;
+  const n1Hash = await hashOf(N1.id);
+  // authorization
+  for (const who of ['cash', 'sales', 'fin', 'store']) { r = await api(who, 'PUT', `/users/${N1.id}/password`, two(reset)); rep(`A ${who} (non-admin) cannot reset passwords (403)`, r.s === 403); }
+  r = await raw('PUT', `/users/${N1.id}/password`, two(reset)); rep('Resetting without signing in -> 401', r.s === 401);
+  r = await api('adm2', 'PUT', `/users/${U.adm2.id}/password`, two(pw())); rep('An Admin cannot reset their own password here (409: use Change password)', r.s === 409, `[${r.s}] ${r.e}`);
+  const otherAdminHash = await hashOf(U.admin.id);
+  r = await api('adm2', 'PUT', `/users/${U.admin.id}/password`, two(pw())); rep("An Admin cannot reset another Admin's password (403)", r.s === 403, `[${r.s}] ${r.e}`);
+  rep("The other Admin's password hash is unchanged", (await hashOf(U.admin.id)) === otherAdminHash);
+  // validation (each refused attempt leaves the stored hash untouched and never echoes the value)
+  const bad = [
+    ['below 12 characters', two('Short-pw-11')],
+    ['a common password', two('Password-2026-ok')],
+    ['containing the e-mail name', two(`x-${N1.email.split('@')[0]}-y`)],
+    ['the two entries differ', two(pw(), pw())],
+    ['the confirmation missing', { password: reset }],
+    ['an unexpected extra field', { ...two(reset), role_id: R.admin }],
+    ['over 128 characters', two('Z'.repeat(129))]
+  ];
+  for (const [name, b] of bad) {
+    r = await api('adm2', 'PUT', `/users/${N1.id}/password`, b);
+    rep(`Admin reset with ${name} -> 400, value not echoed`, r.s === 400 && !JSON.stringify(r.b).includes(b.password), `[${r.s}] ${r.e}`);
+  }
+  rep('No refused reset changed the stored password hash', (await hashOf(N1.id)) === n1Hash);
+  r = await api('adm2', 'PUT', '/users/99999999/password', two(reset)); rep('Resetting an unknown user -> 404', r.s === 404);
+  // success
+  const auditBefore = Number((await q(`select count(*)::int n from audit_logs where entity_type='user_password'`))[0].n);
+  const otherHashes = await q('select id, password_hash from users where id <> $1 order by id', [N1.id]);
+  r = await api('adm2', 'PUT', `/users/${N1.id}/password`, two(reset)); rep('Admin resets a forgotten password; nothing sensitive is returned', r.s === 200 && r.d.password_reset === true && r.d.id === N1.id && !JSON.stringify(r.b).includes(reset) && !JSON.stringify(r.b).includes('$2'), `[${r.s}] ${r.e}`);
+  const newHash = await hashOf(N1.id);
+  rep('The new password is stored only as a bcrypt hash', newHash !== n1Hash && /^\$2[aby]\$10\$/.test(newHash) && !newHash.includes(reset));
+  const afterHashes = await q('select id, password_hash from users where id <> $1 order by id', [N1.id]);
+  rep('No other account was changed by the reset', JSON.stringify(afterHashes) === JSON.stringify(otherHashes));
+  const audR = (await q(`select user_id, entity_id, created_at, new_value, new_value::text t, old_value from audit_logs where entity_type='user_password' order by id desc limit 1`))[0];
+  rep('The reset is audited: who (Admin), whose (target), when', Number((await q(`select count(*)::int n from audit_logs where entity_type='user_password'`))[0].n) === auditBefore + 1
+    && Number(audR.user_id) === U.adm2.id && Number(audR.entity_id) === N1.id && audR.created_at && audR.new_value.event === 'password_reset_by_admin' && audR.new_value.target_email === N1.email, audR && audR.t);
+  rep('The audit record holds no password or hash', !audR.t.includes(reset) && !audR.t.includes('$2') && !/"password"/.test(audR.t) && audR.old_value === null);
 
   // ---------- an Admin reset ends the user's open sessions
   const nu4 = body(4); await api('adm2', 'POST', '/users', nu4);
   const t4 = (await login(nu4.email, nu4.password)).d.token;
   rep('Before the reset the user session works', (await asUser(t4, 'GET', '/auth/me')).s === 200);
   await new Promise((res) => setTimeout(res, 1100));
-  const reset4 = pw(); r = await api('adm2', 'PUT', `/users/${(await q('select id from users where email=$1', [nu4.email]))[0].id}/password`, { password: reset4 });
+  const reset4 = pw(); r = await api('adm2', 'PUT', `/users/${(await q('select id from users where email=$1', [nu4.email]))[0].id}/password`, { password: reset4, password_confirmation: reset4 });
   rep('Admin reset succeeds', r.s === 200);
   rep('The user session opened before the Admin reset is rejected (401)', (await asUser(t4, 'GET', '/auth/me')).s === 401);
   r = await login(nu4.email, reset4); rep('Signing in with the reset password works and gives a working token', r.s === 200 && (await asUser(r.d.token, 'GET', '/auth/me')).s === 200);

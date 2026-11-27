@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useApi } from '../../components/useApi';
 import Table from '../../components/Table';
 import client from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
+import ResetPasswordModal from '../../components/ResetPasswordModal';
 
 export default function UsersTab() {
   const { rows, reload } = useApi('/users');
@@ -10,6 +12,10 @@ export default function UsersTab() {
   const [form, setForm] = useState({ employee_code: '', full_name: '', email: '', password: '', role_id: '', department: '' });
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState(null);
+  const { user: me } = useAuth();
+  const [resetFor, setResetFor] = useState(null);
+  // Not offered for the Admin's own account (Change password in the user menu) or for other Admins; the API refuses both too.
+  const canReset = (u) => Number(u.id) !== Number(me?.id) && u.role_name !== 'Admin';
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -57,11 +63,16 @@ export default function UsersTab() {
             { key: 'role_name', header: 'Role' },
             { key: 'department', header: 'Department' },
             { key: 'assigned_warehouse_name', header: 'Assigned Warehouse' },
-            { key: 'is_active', header: 'Active', render: (r) => (r.is_active ? 'Yes' : 'No') }
+            { key: 'is_active', header: 'Active', render: (r) => (r.is_active ? 'Yes' : 'No') },
+            { key: 'actions', header: '', render: (r) => (canReset(r)
+              ? <button className="btn secondary small" onClick={() => setResetFor(r)} aria-label={`Reset password for ${r.email}`}>Reset password</button>
+              : null) }
           ]}
           rows={rows}
         />
       </div>
+
+      {resetFor && <ResetPasswordModal user={resetFor} onClose={() => setResetFor(null)} />}
 
       <div className="card">
         <h3>Warehouses ({warehouses?.length ?? '…'})</h3>

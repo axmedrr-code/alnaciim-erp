@@ -7,6 +7,7 @@ const { PERM } = require('../middleware/permissions');
 const { validate } = require('../middleware/validate');
 const schemas = require('../validation/schemas');
 const { logAudit } = require('../services/auditService');
+const { passwordPolicyError } = require('../utils/passwordPolicy');
 
 const router = Router();
 // A non-numeric id in the URL is a 404, never a database error.
@@ -79,16 +80,37 @@ router.put('/:id', requireRole('Admin'), validate(schemas.userUpdate), asyncHand
   res.json({ data: result, error: null });
 }));
 
-// Admin sets a new password for a user (for a forgotten password). The password is never returned or written to the audit log.
+// Admin sets a new password for a user who forgot theirs.
+// - Admin only (role read from the database by authenticate/requireRole).
+// - Not for the Admin's own account (that goes through Change password, which needs the current password) and not for
+//   another Admin's account (no Admin can take over another; a forgotten Admin password is reset with
+//   src/scripts/set-user-password.js on the server).
+// - Same policy as that script (utils/passwordPolicy.js). The password is only ever bcrypt-hashed: it is never stored,
+//   returned, logged or written to the audit log. The reset ends every session the user had open.
 router.put('/:id/password', requireRole('Admin'), validate(schemas.userPasswordReset), asyncHandler(async (req, res) => {
-  const hash = await bcrypt.hash(req.body.password, 10);
-  await withTransaction(async (client) => {
-    const { rows } = await client.query('UPDATE users SET password_hash = $1, password_changed_at = now(), updated_at = now() WHERE id = $2 RETURNING id, email', [hash, req.params.id]);
-    if (!rows[0]) throw new ApiError(404, 'User not found');
-    await logAudit(client, { userId: req.user.id, action: 'UPDATE', entityType: 'user_password', entityId: rows[0].id, newValue: { event: 'password_reset_by_admin' } });
+  const targetId = Number(req.params.id);
+  if (targetId === Number(req.user.id)) throw new ApiError(409, 'Use Change password (user menu) for your own account');
+  const result = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `SELECT u.id, u.email, u.full_name, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1 FOR UPDATE OF u`,
+      [targetId]
+    );
+    const target = rows[0];
+    if (!target) throw new ApiError(404, 'User not found');
+    if (target.role_name === 'Admin') throw new ApiError(403, "An Admin account's password cannot be reset here");
+    const policyError = passwordPolicyError(req.body.password, target.email);
+    if (policyError) throw new ApiError(400, `password: ${policyError}`);
+    const hash = await bcrypt.hash(req.body.password, 10);
+    await client.query('UPDATE users SET password_hash = $1, password_changed_at = now(), updated_at = now() WHERE id = $2', [hash, target.id]);
+    // who (user_id) reset whose password (entity_id + e-mail) and when (created_at); never the password or its hash.
+    await logAudit(client, {
+      userId: req.user.id, action: 'UPDATE', entityType: 'user_password', entityId: target.id,
+      newValue: { event: 'password_reset_by_admin', target_user_id: target.id, target_email: target.email, reset_by_user_id: Number(req.user.id) }
+    });
+    return target;
   });
-  invalidateUser(req.params.id);
-  res.json({ data: { id: Number(req.params.id), password_reset: true }, error: null });
+  invalidateUser(result.id);
+  res.json({ data: { id: result.id, password_reset: true }, error: null });
 }));
 
 router.get('/roles', asyncHandler(async (req, res) => {

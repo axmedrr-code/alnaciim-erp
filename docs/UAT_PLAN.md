@@ -9,7 +9,7 @@
 
 ## 1. How to run the UAT
 
-1. One tester per account. The Admin issues each tester a password **only on request** (it is copied to the clipboard, never written down or chat-ed). Passwords of UAT accounts are random and unknown until issued; each tester should change theirs from the user menu → *Change password*. The accounts are used for this UAT only and are re-issued or disabled afterwards.
+1. One tester per account. The Admin issues each tester a password **only on request** (it is copied to the clipboard, never written down or chat-ed). Passwords of UAT accounts are random and unknown until issued; each tester should change theirs from the user menu → *Change password*. A forgotten password is reset by the Admin in *Settings → Users → Reset password* (12+ characters, not a common password, not the e-mail name; not available for Admin accounts, whose passwords are reset with `backend/src/scripts/set-user-password.js`). The accounts are used for this UAT only and are re-issued or disabled afterwards.
 2. Work through the scripts in section 5 in order. For each step record **PASS / FAIL / BLOCKED** and, for FAIL/BLOCKED, a defect line (section 8). Take a screenshot for every FAIL.
 3. Use **only** the UAT data in section 4 (`UAT-*` codes) and the seeded catalogue. Do not edit or delete other people's records.
 4. Severity: **S1** blocks a business process or loses/corrupts money or stock · **S2** wrong result with a workaround · **S3** cosmetic/wording.

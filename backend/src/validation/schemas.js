@@ -898,7 +898,14 @@ const userUpdate = z.object({
 });
 
 const passwordRule = z.string().min(8, 'Password must be at least 8 characters').max(128);
-const userPasswordReset = z.object({ body: z.object({ password: passwordRule }) });
+// Admin reset: the new password is typed twice. The full policy (12+ characters, not common, not the e-mail name) is
+// checked in the route, where the target's e-mail is known. Messages never echo the value.
+const userPasswordReset = z.object({
+  body: z.object({
+    password: z.string().max(128, 'Password must be at most 128 characters'),
+    password_confirmation: z.string().max(128, 'Password must be at most 128 characters')
+  }).strict().refine((b) => b.password === b.password_confirmation, { message: 'The two passwords do not match', path: ['password_confirmation'] })
+});
 const passwordChange = z.object({ body: z.object({ current_password: z.string().min(1), new_password: passwordRule }) });
 const supplierUpdate = z.object({
   body: z.object({

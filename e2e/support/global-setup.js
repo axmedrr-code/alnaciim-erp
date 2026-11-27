@@ -16,7 +16,8 @@ const ACCOUNTS = [
   ['cashier', 'Cashier', null],
   ['store_fg', 'Storekeeper', 6],
   ['store_rm', 'Storekeeper', 6],
-  ['collector', 'Collector', null]
+  ['collector', 'Collector', null],
+  ['reset_target', 'Cashier', null] // only for admin-reset.spec.js, whose password it changes
 ];
 
 async function waitFor(url, label, tries = 120) {
