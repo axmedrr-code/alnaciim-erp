@@ -265,7 +265,7 @@ router.get('/batches', requireRole(...PERM.PRODUCTION_VIEW), asyncHandler(async 
      LEFT JOIN users cu ON cu.id = pb.completed_by
      LEFT JOIN warehouses dw ON dw.id = pb.destination_warehouse_id
      ${where}
-     ORDER BY pb.start_time DESC NULLS LAST`,
+     ORDER BY COALESCE(pb.start_time, pb.created_at) DESC, pb.id DESC`, // a new planned order (no start time yet) shows first, not on the last page
     params
   );
   res.json({ data: rows, error: null });

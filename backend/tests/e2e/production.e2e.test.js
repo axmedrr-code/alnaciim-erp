@@ -59,6 +59,11 @@ const { start } = require('./harness');
   r = await api('pm1', 'POST', `/production/batches/${A.id}/output-decision`, { decision: 'approve', reason: 'Self approval' }); rep('The supervisor who completed the batch cannot approve its output (403)', r.s === 403);
   r = await api('tech', 'POST', `/production/batches/${A.id}/output-decision`, { decision: 'approve', reason: 'Technician approval' }); rep('Technician cannot approve output (403)', r.s === 403);
   r = await api('pm2', 'POST', `/production/batches/${A.id}/output-decision`, { decision: 'approve', reason: '' }); rep('Approval needs a reason (400)', r.s === 400);
+  // a brand-new planned order (no start time) must be at the top of the list, not on the last page
+  r = await api('pm1', 'POST', '/production/batches', { batch_number: `NEWEST-${stamp}`, production_type: 'BOTTLING', machine_id: (await q('select machine_id from production_batches where id=$1', [A.id]))[0].machine_id, planned_qty: 5, unit: 'pcs' });
+  const listNow = (await api('pm1', 'GET', '/production/batches')).d || [];
+  rep('A new planned order appears first in the batch list', r.s === 201 && listNow.length > 1 && listNow[0].batch_number === `NEWEST-${stamp}`, listNow[0] && listNow[0].batch_number);
+  await api('pm1', 'DELETE', `/production/batches/${r.d && r.d.id}`);
   // read-only materials view used by the output-review panel
   r = await api('pm2', 'GET', `/production/batches/${A.id}/materials`);
   rep('The approver can see the materials the batch consumed (product, quantity, warehouse)', r.s === 200 && r.d.length > 0 && r.d.every((m) => m.product_name && Number(m.quantity_used) > 0 && m.warehouse_name), `[${r.s}] ${r.e}`);
