@@ -74,10 +74,12 @@ describe('a 401 caused by a concurrent password change', () => {
   });
 
   it('a late 401 that arrives after the new token is stored is retried once', async () => {
-    client.defaults.adapter = (config) => (config.headers.Authorization === 'Bearer T' ? reply(config, 401) : reply(config, 200, { ok: true }));
-    const request = client.get('/dashboard');
-    localStorage.setItem('token', 'NEW');
-    expect((await request).data.ok).toBe(true);
+    client.defaults.adapter = (config) => {
+      if (config.headers.Authorization !== 'Bearer T') return reply(config, 200, { ok: true });
+      localStorage.setItem('token', 'NEW'); // the new token is stored while this request is on the wire
+      return reply(config, 401);
+    };
+    expect((await client.get('/dashboard')).data.ok).toBe(true);
     expect(window.location.href).toBe('/finance');
   });
 
