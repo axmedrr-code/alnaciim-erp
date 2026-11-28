@@ -15,7 +15,7 @@
 4. Severity: **S1** blocks a business process or loses/corrupts money or stock · **S2** wrong result with a workaround · **S3** cosmetic/wording.
 5. UAT exit criteria (section 9): all S1 and S2 fixed and re-tested, every role signed off, reconciliation checks (section 7) clean.
 
-> Do **not** run the automated E2E suites during UAT: some of them re-assign department heads and add test rows on the same TEST database.
+> Do **not** run the automated E2E suites (backend `tests/e2e`, Playwright `e2e/` and `e2e-erp/`) during UAT: some of them re-assign department heads and add test rows on the same TEST database.
 
 ## 2. UAT accounts
 

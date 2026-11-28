@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-26 · **Code reviewed:** `main` @ `48c0835` (PR #28 merged) · **Environment:** TEST only (Neon TEST, Render `alnaciim-erp-test-api`, Vercel `alnaciim-erp-test`, POS `alnaciim-pos-test`) · **Production, Railway, Odoo, WMS, NUWACO and GEEDSAN were not touched.**
 
-> **Update (same day, after the review):** security items S1 (`react-router`) and S2 (token invalidation) are **closed** (PR #30, #31, deployed to TEST), and the UI route-guard / not-found / login-redirect gaps found in the browser check are fixed (UI guard PR #32). **Automatic UI tests now exist** for the ERP frontend (156) and the POS (6) (PR #34). Sections 1-9 below are updated accordingly; the 1,312 E2E + 53 unit figures are the backend results of the review itself.
+> **Update (same day, after the review):** security items S1 (`react-router`) and S2 (token invalidation) are **closed** (PR #30, #31, deployed to TEST), and the UI route-guard / not-found / login-redirect gaps found in the browser check are fixed (UI guard PR #32). **Automatic UI tests now exist** for the ERP frontend and the POS (PR #34), and a **real-browser Playwright suite (39 tests, PR #39)** that found and fixed two more defects (PR #38, #40). Sections 1-9 below are updated accordingly; the 1,312 E2E + 53 unit figures are the backend results of the review itself.
 
 > **Soo koobid (Somali):** Dib-u-eegista tayada buuxda waa dhammaatay. **1,312 tijaabo E2E + 53 unit: dhammaantood PASS, 0 fashil** (suite kasta mid-mid ayaa loo socodsiiyay Neon TEST). Dib-u-eegistu waxay heshay oo sixday saddex cilad oo badeeco ah (audit-ka dhexe, GRN/issue ee Storekeeper aan xaddidnayn, kala-saarida RM/FG) iyo laba cilad oo tijaabo ah. **TEST waa diyaar UAT-ga dadka dhabta ah. Production MA DIYAAR AH.**
 
@@ -14,7 +14,8 @@
 | Production ready | **No** (blockers in section 7) |
 | Automated tests | **1,312 E2E + 53 unit PASS, 0 FAIL** |
 | Browser UAT by real staff | **Not started** (cannot be done by the assistant) |
-| Frontend / POS automated tests | **162 PASS** (ERP 156 + POS 6, jsdom with a mocked API; added after the review in PR #34) |
+| Frontend / POS automated tests | **180 PASS** (ERP 174 + POS 6, jsdom with a mocked API; PR #34, later PRs #38, #40 and the production-batch work add to the ERP count) |
+| Real-browser E2E (Playwright, Edge) | **39/39 PASS** in `e2e-erp/` (two earlier runs and the final run after the fixes); a second suite lives in `e2e/` (PR #36, see its README) |
 
 ## 2. Completed features (as of this review)
 
@@ -76,6 +77,19 @@ Vitest 2 + Testing Library + jsdom, run with `npm test` in `frontend/` and `pos/
 |---|---|---|
 | ERP frontend | **156/156** | role-access table for 16 roles × 14 pages written out independently of the code; the whole `App` for 8 roles × 14 pages (page / access message / not found), signed-out and `/login` redirects, sidebar equals the allowed pages; Cashier has no Reports tab; Storekeeper sees only the own warehouse in Stock Levels; change-password stores the fresh token; API client 401/403 session handling |
 | POS | **6/6** | signed-out redirects, signed-in home/import/unknown URL, `/login` redirect, logout |
+
+### 4c. Real-browser end-to-end tests (Playwright, added after section 4b)
+
+`e2e-erp/` (PR #39) drives the real ERP in Edge: sign-in through the login form, the menu and every page for 7 roles, the Raw-Materials storekeeper, cashier cash/credit sales, and an emergency purchase request through the storekeeper, Department Head and Operation Manager. 39 tests, local backend + Vite on Neon TEST, random passwords kept in process memory, a guard that refuses any database that is not localhost or Neon. `e2e/` (PR #36, other work) is a separate suite with its own users (`pwui.*`); both use ports 4000/5173, so run them one after the other.
+
+It found **two real defects** that the jsdom tests could not see, both fixed and deployed to TEST:
+
+| Defect | Effect | Fix |
+|---|---|---|
+| A request sent while a password change is in flight got 401 and logged the user out although the change returns a fresh token | User thrown to the login page right after changing the password | PR #38: a 401 waits for an in-flight change and a request with an out-of-date token is retried once; a really ended session still goes to `/login` (3 unit tests, 2 fail on the old client) |
+| `useApi` let a slower earlier answer overwrite a newer one | Switching "Needs my action" → "My requests" could show "Nothing here yet" although the request existed (any page using the hook) | PR #40: only the newest request writes (3 unit tests, 2 fail on the old hook) |
+
+Final run after both fixes: **39/39 PASS** (3.3 min). Limits: Edge only, 5-7 roles, local stack against TEST; it does not replace the staff UAT in `docs/UAT_PLAN.md`.
 
 Mutation-checked: each protected behavior (Cashier Reports, route guard, Storekeeper scope, fresh token, 401 exception, POS catch-all and login redirect) was broken on purpose and its tests failed; the code was then restored. Both `vite build` pass; `npm audit --omit=dev` is 0 for both.
 
@@ -151,6 +165,6 @@ No password or secret was printed, committed or stored; UAT passwords were put o
 
 1. Staff UAT on TEST (this week), then a daily defect triage.
 2. ~~Fix S2 and S1~~ **Done** (#30, #31).
-3. ~~Add a small automated UI suite~~ **Done** (PR #34, 162 tests); next: a real-browser end-to-end suite (e.g. Playwright against TEST) for the Cashier/Storekeeper/Collector flows.
+3. ~~Add a small automated UI suite~~ **Done** (PR #34). ~~Real-browser end-to-end suite~~ **Done** (PR #39, 39/39; found and fixed two defects, PR #38 and #40). Next: extend it to Collector, Production and Procurement-to-GRN flows and add Firefox/Chrome.
 4. Decide the policy for legacy wrong-warehouse stock; then clean it by transfer/adjustment (not deletion).
 5. Plan hosted backups and a restore rehearsal before any production talk.
