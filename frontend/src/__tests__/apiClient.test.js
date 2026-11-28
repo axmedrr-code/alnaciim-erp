@@ -46,3 +46,47 @@ describe('API client session handling', () => {
     expect(localStorage.getItem('token')).toBe('T');
   });
 });
+
+describe('a 401 caused by a concurrent password change', () => {
+  const reply = (config, status, data = {}) => {
+    const response = { status, data, headers: {}, config };
+    return status < 400 ? Promise.resolve(response) : Promise.reject(Object.assign(new Error(`HTTP ${status}`), { config, response, isAxiosError: true }));
+  };
+
+  it('a background request refused while the change is in flight is retried with the new token', async () => {
+    let releaseChange;
+    const seen = [];
+    client.defaults.adapter = (config) => {
+      if (/change-password$/.test(config.url)) return new Promise((resolve) => { releaseChange = () => resolve(reply(config, 200, { data: { token: 'NEW' } })); });
+      seen.push(config.headers.Authorization);
+      return config.headers.Authorization === 'Bearer T' ? reply(config, 401) : reply(config, 200, { ok: true });
+    };
+    const change = client.post('/auth/change-password', {});
+    const background = client.get('/dashboard');
+    await new Promise((r) => setTimeout(r, 10));
+    releaseChange();
+    await change;
+    const res = await background;
+    expect(res.data.ok).toBe(true);
+    expect(seen).toEqual(['Bearer T', 'Bearer NEW']);
+    expect(localStorage.getItem('token')).toBe('NEW');
+    expect(window.location.href).toBe('/finance');
+  });
+
+  it('a late 401 that arrives after the new token is stored is retried once', async () => {
+    client.defaults.adapter = (config) => (config.headers.Authorization === 'Bearer T' ? reply(config, 401) : reply(config, 200, { ok: true }));
+    const request = client.get('/dashboard');
+    localStorage.setItem('token', 'NEW');
+    expect((await request).data.ok).toBe(true);
+    expect(window.location.href).toBe('/finance');
+  });
+
+  it('a session that really ended still goes to the login page and is not retried forever', async () => {
+    let calls = 0;
+    client.defaults.adapter = (config) => { calls += 1; return reply(config, 401); };
+    await expect(client.get('/dashboard')).rejects.toBeTruthy();
+    expect(calls).toBe(1);
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(window.location.href).toBe('/login');
+  });
+});
